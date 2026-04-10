@@ -66,4 +66,36 @@ return {
       })
     end,
   },
+  {
+    name = "replaces a selected blank docstring line with a transcript",
+    fn = function()
+      local bufnr = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+        '"""',
+        "    ",
+        '"""',
+      })
+
+      local ok, err = inserter.replace({
+        bufnr = bufnr,
+        start_row = 2,
+        end_row = 2,
+        indent = "    ",
+        lines_snapshot = {
+          "    ",
+        },
+      }, {
+        ">>> x = 1",
+        "1",
+      })
+
+      t.assert_true(ok, err)
+      t.assert_deep_equal(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), {
+        '"""',
+        "    >>> x = 1",
+        "    1",
+        '"""',
+      })
+    end,
+  },
 }
