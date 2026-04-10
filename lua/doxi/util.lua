@@ -207,4 +207,13 @@ function M.probably_in_python_docstring(bufnr, row)
   return active_delimiter ~= nil
 end
 
+function M.selection_in_python_docstring(bufnr, start_row, end_row)
+  if vim.bo[bufnr].filetype ~= "python" then
+    return false
+  end
+
+  return M.probably_in_python_docstring(bufnr, start_row)
+    and M.probably_in_python_docstring(bufnr, end_row)
+end
+
 return M

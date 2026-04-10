@@ -9,14 +9,11 @@ function M.setup()
 
   did_setup = true
 
-  vim.api.nvim_create_user_command("DoxiNew", function()
-    require("doxi.session").open_new()
-  end, {})
-
-  vim.api.nvim_create_user_command("DoxiEdit", function(opts)
-    require("doxi.session").open_edit({
+  vim.api.nvim_create_user_command("DoxiOpen", function(opts)
+    require("doxi.session").open({
       line1 = opts.line1,
       line2 = opts.line2,
+      range = opts.range,
     })
   end, {
     range = true,
@@ -26,9 +23,15 @@ function M.setup()
     require("doxi.session").run_all()
   end, {})
 
-  vim.api.nvim_create_user_command("DoxiRunSelection", function()
-    require("doxi.session").run_selection()
-  end, {})
+  vim.api.nvim_create_user_command("DoxiRunSelection", function(opts)
+    require("doxi.session").run_selection({
+      line1 = opts.line1,
+      line2 = opts.line2,
+      range = opts.range,
+    })
+  end, {
+    range = true,
+  })
 
   vim.api.nvim_create_user_command("DoxiRestart", function()
     require("doxi.session").restart()
@@ -38,20 +41,12 @@ function M.setup()
     require("doxi.session").restart_and_rerun()
   end, {})
 
-  vim.api.nvim_create_user_command("DoxiSwitchInterpreter", function()
-    require("doxi.session").switch_interpreter()
+  vim.api.nvim_create_user_command("DoxiEnvSwitch", function()
+    require("doxi.session").env_switch()
   end, {})
 
-  vim.api.nvim_create_user_command("DoxiInsert", function()
-    require("doxi.session").insert_transcript()
-  end, {})
-
-  vim.api.nvim_create_user_command("DoxiReplace", function()
-    require("doxi.session").replace_transcript()
-  end, {})
-
-  vim.api.nvim_create_user_command("DoxiCopy", function()
-    require("doxi.session").copy_transcript()
+  vim.api.nvim_create_user_command("DoxiApply", function()
+    require("doxi.session").apply()
   end, {})
 
   vim.api.nvim_create_user_command("DoxiCancel", function()

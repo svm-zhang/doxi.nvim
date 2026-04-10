@@ -1,8 +1,8 @@
 local backend = require("doxi.backend")
 local config = require("doxi.config")
 local env = require("doxi.env")
-local importer = require("doxi.importer")
 local inserter = require("doxi.inserter")
+local selection = require("doxi.selection")
 local transcript = require("doxi.transcript")
 local ui = require("doxi.ui")
 local util = require("doxi.util")
@@ -13,10 +13,6 @@ local Session = {}
 Session.__index = Session
 
 local active_session = nil
-
-local function current_line(bufnr, row)
-  return vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
-end
 
 local function ensure_python_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -34,24 +30,19 @@ local function close_active_session()
   end
 end
 
-local function create_session(mode, target, editor_lines)
+local function create_session(target, interpreter_path)
   close_active_session()
 
-  local interpreter_path, err = env.resolve_default(target.source_bufnr)
-  if not interpreter_path then
-    return nil, err
-  end
-
   local session = setmetatable({
-    mode = mode,
+    kind = target.kind,
+    workflow = target.kind == "blank" and "new example" or "edit example",
     source_bufnr = target.source_bufnr,
-    source_cursor = target.source_cursor,
     source_range = target.source_range,
     source_indent = target.source_indent or "",
-    source_line_snapshot = target.source_line_snapshot,
-    source_lines_snapshot = target.source_lines_snapshot,
+    source_lines_snapshot = vim.deepcopy(target.source_lines_snapshot or {}),
     transcript_lines = {},
     interpreter_path = interpreter_path,
+    closed = false,
   }, Session)
 
   session.backend = backend.new({
@@ -62,9 +53,12 @@ local function create_session(mode, target, editor_lines)
   session.editor_winid = session.view.editor_winid
   session.output_bufnr = session.view.output_bufnr
   session.output_winid = session.view.output_winid
+  session.hints_bufnr = session.view.hints_bufnr
+  session.hints_winid = session.view.hints_winid
 
-  ui.set_editor_lines(session.view, editor_lines or {})
+  ui.set_editor_lines(session.view, target.editor_lines or {})
   ui.set_output_lines(session.view, {})
+  ui.set_hints_lines(session.view, ui.build_hint_lines(config.get().session_keymaps))
   session:_set_keymaps()
   ui.focus_editor(session.view)
 
@@ -72,50 +66,32 @@ local function create_session(mode, target, editor_lines)
   return session
 end
 
-local function create_insert_target()
+local function create_target(line1, line2)
   local bufnr, err = ensure_python_buffer()
   if not bufnr then
     return nil, err
   end
 
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local row = cursor[1]
-  local line = current_line(bufnr, row)
-
-  if not util.probably_in_python_docstring(bufnr, row) then
-    return nil, "Place the cursor inside a Python docstring before opening a session."
-  end
-
-  return {
-    source_bufnr = bufnr,
-    source_cursor = { row, cursor[2] },
-    source_indent = util.get_indent(line),
-    source_line_snapshot = line,
-  }
+  return selection.build_target({
+    bufnr = bufnr,
+    start_row = line1,
+    end_row = line2,
+  })
 end
 
-local function create_replace_target(line1, line2)
-  local bufnr, err = ensure_python_buffer()
-  if not bufnr then
-    return nil, err
-  end
+local function open_with_target(target)
+  env.pick_interpreter({
+    bufnr = target.source_bufnr,
+  }, function(path)
+    if not path then
+      return
+    end
 
-  local selected_lines = vim.api.nvim_buf_get_lines(bufnr, line1 - 1, line2, false)
-  local imported, import_err = importer.parse_doctest_block(selected_lines)
-  if not imported then
-    return nil, import_err
-  end
-
-  return {
-    source_bufnr = bufnr,
-    source_range = {
-      start_row = line1,
-      end_row = line2,
-    },
-    source_indent = imported.indent,
-    source_lines_snapshot = selected_lines,
-    editor_lines = imported.source_lines,
-  }
+    local _, err = create_session(target, path)
+    if err then
+      util.notify(err, vim.log.levels.ERROR)
+    end
+  end)
 end
 
 function Session:_map(bufnr, mode, lhs, rhs, desc)
@@ -138,9 +114,7 @@ function Session:_set_keymaps()
     self:run_all()
   end, "Run all example code")
 
-  self:_map(self.editor_bufnr, "x", keymaps.run_selection, function()
-    self:run_selection()
-  end, "Run selected example code")
+  self:_map(self.editor_bufnr, "x", keymaps.run_selection, ":DoxiRunSelection<CR>", "Run selected example code")
 
   self:_map(self.editor_bufnr, "n", keymaps.restart, function()
     self:restart()
@@ -150,36 +124,56 @@ function Session:_set_keymaps()
     self:restart_and_rerun()
   end, "Restart and rerun example code")
 
-  self:_map(self.editor_bufnr, "n", keymaps.switch_interpreter, function()
-    self:switch_interpreter()
-  end, "Switch Python interpreter")
+  self:_map(self.editor_bufnr, "n", keymaps.env_switch, function()
+    self:env_switch()
+  end, "Switch Python environment")
 
   self:_map(self.editor_bufnr, "n", keymaps.apply, function()
-    self:apply_transcript()
+    self:apply()
   end, "Apply transcript")
-
-  self:_map(self.editor_bufnr, "n", keymaps.copy, function()
-    self:copy_transcript()
-  end, "Copy transcript")
 
   self:_map(self.editor_bufnr, "n", keymaps.cancel, function()
     self:close()
   end, "Cancel example session")
 
   self:_map(self.output_bufnr, "n", keymaps.apply, function()
-    self:apply_transcript()
+    self:apply()
   end, "Apply transcript")
 
-  self:_map(self.output_bufnr, "n", keymaps.copy, function()
-    self:copy_transcript()
-  end, "Copy transcript")
-
   self:_map(self.output_bufnr, "n", keymaps.cancel, function()
+    self:close()
+  end, "Cancel example session")
+
+  self:_map(self.hints_bufnr, "n", keymaps.run_all, function()
+    self:run_all()
+  end, "Run all example code")
+
+  self:_map(self.hints_bufnr, "n", keymaps.restart, function()
+    self:restart()
+  end, "Restart Python session")
+
+  self:_map(self.hints_bufnr, "n", keymaps.restart_rerun, function()
+    self:restart_and_rerun()
+  end, "Restart and rerun example code")
+
+  self:_map(self.hints_bufnr, "n", keymaps.env_switch, function()
+    self:env_switch()
+  end, "Switch Python environment")
+
+  self:_map(self.hints_bufnr, "n", keymaps.apply, function()
+    self:apply()
+  end, "Apply transcript")
+
+  self:_map(self.hints_bufnr, "n", keymaps.cancel, function()
     self:close()
   end, "Cancel example session")
 end
 
 function Session:set_transcript(lines)
+  if self.closed then
+    return
+  end
+
   self.transcript_lines = vim.deepcopy(lines or {})
   ui.set_output_lines(self.view, self.transcript_lines)
 end
@@ -189,6 +183,10 @@ function Session:get_editor_lines()
 end
 
 function Session:_execute(code)
+  if self.closed then
+    return
+  end
+
   if util.is_blank(code) then
     self:set_transcript({})
     util.notify("No code to run.", vim.log.levels.WARN)
@@ -196,6 +194,10 @@ function Session:_execute(code)
   end
 
   self.backend:execute(code, function(result, err)
+    if self.closed then
+      return
+    end
+
     if err then
       util.notify(err, vim.log.levels.ERROR)
       return
@@ -210,25 +212,27 @@ function Session:run_all()
   self:_execute(table.concat(self:get_editor_lines(), "\n"))
 end
 
-function Session:run_selection()
+function Session:run_selection(opts)
   if vim.api.nvim_get_current_buf() ~= self.editor_bufnr then
     util.notify("Focus the editor pane and select lines to run.", vim.log.levels.WARN)
     return
   end
 
-  local start_row, end_row = util.get_visual_line_range()
-  if not start_row then
+  if not opts or not opts.line1 or not opts.line2 or opts.range == 0 then
     util.notify("Select some lines in the editor pane first.", vim.log.levels.WARN)
     return
   end
 
-  local lines = vim.api.nvim_buf_get_lines(self.editor_bufnr, start_row - 1, end_row, false)
-  util.escape_visual_mode()
+  local lines = vim.api.nvim_buf_get_lines(self.editor_bufnr, opts.line1 - 1, opts.line2, false)
   self:_execute(table.concat(lines, "\n"))
 end
 
 function Session:restart(after_restart)
   self.backend:reset(function(_, err)
+    if self.closed then
+      return
+    end
+
     if err then
       util.notify(err, vim.log.levels.ERROR)
       return
@@ -250,12 +254,12 @@ function Session:restart_and_rerun()
   end)
 end
 
-function Session:switch_interpreter()
+function Session:env_switch()
   env.pick_interpreter({
     bufnr = self.source_bufnr,
     current = self.interpreter_path,
   }, function(path)
-    if not path or path == self.interpreter_path then
+    if self.closed or not path or path == self.interpreter_path then
       return
     end
 
@@ -266,49 +270,11 @@ function Session:switch_interpreter()
       self:set_transcript({})
     end
 
-    util.notify(("Switched interpreter to %s"):format(path))
+    util.notify(("Switched environment to %s"):format(path))
   end)
 end
 
-function Session:copy_transcript()
-  if not self.transcript_lines or #self.transcript_lines == 0 then
-    util.notify("There is no transcript to copy yet.", vim.log.levels.WARN)
-    return
-  end
-
-  local text = table.concat(self.transcript_lines, "\n")
-  vim.fn.setreg("+", text)
-  vim.fn.setreg('"', text)
-  util.notify("Transcript copied to the clipboard.")
-end
-
-function Session:insert_transcript()
-  if self.mode ~= "insert" then
-    util.notify("The active session is not in insert mode.", vim.log.levels.ERROR)
-    return
-  end
-
-  local ok, err = inserter.insert({
-    bufnr = self.source_bufnr,
-    row = self.source_cursor[1],
-    indent = self.source_indent,
-    line_snapshot = self.source_line_snapshot,
-  }, self.transcript_lines)
-
-  if not ok then
-    util.notify(err, vim.log.levels.ERROR)
-    return
-  end
-
-  self:close()
-end
-
-function Session:replace_transcript()
-  if self.mode ~= "replace" then
-    util.notify("The active session is not in replace mode.", vim.log.levels.ERROR)
-    return
-  end
-
+function Session:apply()
   local ok, err = inserter.replace({
     bufnr = self.source_bufnr,
     start_row = self.source_range.start_row,
@@ -325,16 +291,13 @@ function Session:replace_transcript()
   self:close()
 end
 
-function Session:apply_transcript()
-  if self.mode == "insert" then
-    self:insert_transcript()
+function Session:close()
+  if self.closed then
     return
   end
 
-  self:replace_transcript()
-end
+  self.closed = true
 
-function Session:close()
   if self.backend then
     self.backend:stop()
   end
@@ -346,50 +309,28 @@ function Session:close()
   if active_session == self then
     active_session = nil
   end
+
+  self.view = nil
+  self.backend = nil
+  self.editor_bufnr = nil
+  self.output_bufnr = nil
+  self.hints_bufnr = nil
+  self.transcript_lines = {}
 end
 
-function M.open_new()
-  local target, err = create_insert_target()
+function M.open(opts)
+  if not opts or opts.range == 0 or not opts.line1 or not opts.line2 then
+    util.notify("Visual-select an empty docstring line or contiguous doctest block first.", vim.log.levels.ERROR)
+    return
+  end
+
+  local target, err = create_target(opts.line1, opts.line2)
   if not target then
     util.notify(err, vim.log.levels.ERROR)
     return
   end
 
-  local _, session_err = create_session("insert", target, {})
-  if session_err then
-    util.notify(session_err, vim.log.levels.ERROR)
-  end
-end
-
-function M.open_edit(opts)
-  local line1 = opts and opts.line1 or nil
-  local line2 = opts and opts.line2 or nil
-
-  if not line1 or not line2 or line1 == 0 or line2 == 0 then
-    line1, line2 = util.get_visual_line_range()
-  end
-
-  if not line1 or not line2 then
-    util.notify("Select a contiguous doctest block before editing it.", vim.log.levels.ERROR)
-    return
-  end
-
-  local target, err = create_replace_target(line1, line2)
-  if not target then
-    util.notify(err, vim.log.levels.ERROR)
-    return
-  end
-
-  local _, session_err = create_session("replace", {
-    source_bufnr = target.source_bufnr,
-    source_range = target.source_range,
-    source_indent = target.source_indent,
-    source_lines_snapshot = target.source_lines_snapshot,
-  }, target.editor_lines)
-
-  if session_err then
-    util.notify(session_err, vim.log.levels.ERROR)
-  end
+  open_with_target(target)
 end
 
 function M.get_active()
@@ -404,9 +345,9 @@ function M.run_all()
   end
 end
 
-function M.run_selection()
+function M.run_selection(opts)
   if active_session then
-    active_session:run_selection()
+    active_session:run_selection(opts)
   else
     util.notify("No active doxi session.", vim.log.levels.WARN)
   end
@@ -428,33 +369,17 @@ function M.restart_and_rerun()
   end
 end
 
-function M.switch_interpreter()
+function M.env_switch()
   if active_session then
-    active_session:switch_interpreter()
+    active_session:env_switch()
   else
     util.notify("No active doxi session.", vim.log.levels.WARN)
   end
 end
 
-function M.copy_transcript()
+function M.apply()
   if active_session then
-    active_session:copy_transcript()
-  else
-    util.notify("No active doxi session.", vim.log.levels.WARN)
-  end
-end
-
-function M.insert_transcript()
-  if active_session then
-    active_session:insert_transcript()
-  else
-    util.notify("No active doxi session.", vim.log.levels.WARN)
-  end
-end
-
-function M.replace_transcript()
-  if active_session then
-    active_session:replace_transcript()
+    active_session:apply()
   else
     util.notify("No active doxi session.", vim.log.levels.WARN)
   end
