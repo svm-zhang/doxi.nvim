@@ -7,6 +7,7 @@ local defaults = {
     width = 0.7,
     height = 0.75,
     editor_height = 0.45,
+    hints_height = 2,
     border = "rounded",
   },
   session_keymaps = {
@@ -14,9 +15,8 @@ local defaults = {
     run_selection = "<leader>rs",
     restart = "<leader>rr",
     restart_rerun = "<leader>rR",
-    switch_interpreter = "<leader>re",
+    env_switch = "<leader>re",
     apply = "<leader>da",
-    copy = "<leader>dy",
     cancel = "q",
   },
 }

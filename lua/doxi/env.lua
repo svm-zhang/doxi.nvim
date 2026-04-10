@@ -136,7 +136,7 @@ function M.pick_interpreter(opts, callback)
   })
 
   vim.ui.select(items, {
-    prompt = "Select Python interpreter",
+    prompt = "Select Python environment",
     format_item = function(item)
       if item.path then
         return ("%s [%s]"):format(item.label, item.path)
