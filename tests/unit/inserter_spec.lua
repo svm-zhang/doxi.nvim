@@ -52,6 +52,8 @@ return {
           "    >>> x = 1",
           "    1",
         },
+        leading_blank_lines = {},
+        trailing_blank_lines = {},
       }, {
         ">>> y = 2",
         "2",
@@ -67,7 +69,7 @@ return {
     end,
   },
   {
-    name = "replaces a selected blank docstring line with a transcript",
+    name = "replaces a selected blank docstring line and preserves it as a separator",
     fn = function()
       local bufnr = vim.api.nvim_create_buf(false, true)
       vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
@@ -84,6 +86,10 @@ return {
         lines_snapshot = {
           "    ",
         },
+        leading_blank_lines = {},
+        trailing_blank_lines = {
+          "    ",
+        },
       }, {
         ">>> x = 1",
         "1",
@@ -94,6 +100,181 @@ return {
         '"""',
         "    >>> x = 1",
         "    1",
+        "    ",
+        '"""',
+      })
+    end,
+  },
+  {
+    name = "replaces a selected blank docstring line with synthesized surrounding separators",
+    fn = function()
+      local bufnr = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+        '"""',
+        "    >>> before()",
+        "    1",
+        "",
+        "    Next title:",
+        '"""',
+      })
+
+      local ok, err = inserter.replace({
+        bufnr = bufnr,
+        start_row = 4,
+        end_row = 4,
+        indent = "    ",
+        lines_snapshot = {
+          "",
+        },
+        leading_blank_lines = {
+          "    ",
+        },
+        trailing_blank_lines = {
+          "",
+        },
+      }, {
+        ">>> x = 1",
+        "1",
+      })
+
+      t.assert_true(ok, err)
+      t.assert_deep_equal(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), {
+        '"""',
+        "    >>> before()",
+        "    1",
+        "    ",
+        "    >>> x = 1",
+        "    1",
+        "",
+        "    Next title:",
+        '"""',
+      })
+    end,
+  },
+  {
+    name = "preserves a leading blank line selected with a doctest block",
+    fn = function()
+      local bufnr = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+        '"""',
+        "    ",
+        "    >>> x = 1",
+        "    1",
+        '"""',
+      })
+
+      local ok, err = inserter.replace({
+        bufnr = bufnr,
+        start_row = 2,
+        end_row = 4,
+        indent = "    ",
+        lines_snapshot = {
+          "    ",
+          "    >>> x = 1",
+          "    1",
+        },
+        leading_blank_lines = {
+          "    ",
+        },
+        trailing_blank_lines = {},
+      }, {
+        ">>> y = 2",
+        "2",
+      })
+
+      t.assert_true(ok, err)
+      t.assert_deep_equal(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), {
+        '"""',
+        "    ",
+        "    >>> y = 2",
+        "    2",
+        '"""',
+      })
+    end,
+  },
+  {
+    name = "preserves a trailing blank line selected with a doctest block",
+    fn = function()
+      local bufnr = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+        '"""',
+        "    >>> x = 1",
+        "    1",
+        "    ",
+        '"""',
+      })
+
+      local ok, err = inserter.replace({
+        bufnr = bufnr,
+        start_row = 2,
+        end_row = 4,
+        indent = "    ",
+        lines_snapshot = {
+          "    >>> x = 1",
+          "    1",
+          "    ",
+        },
+        leading_blank_lines = {},
+        trailing_blank_lines = {
+          "    ",
+        },
+      }, {
+        ">>> y = 2",
+        "2",
+      })
+
+      t.assert_true(ok, err)
+      t.assert_deep_equal(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), {
+        '"""',
+        "    >>> y = 2",
+        "    2",
+        "    ",
+        '"""',
+      })
+    end,
+  },
+  {
+    name = "preserves leading and trailing blank lines selected with a doctest block",
+    fn = function()
+      local bufnr = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+        '"""',
+        "    ",
+        "    >>> x = 1",
+        "    1",
+        "    ",
+        '"""',
+      })
+
+      local ok, err = inserter.replace({
+        bufnr = bufnr,
+        start_row = 2,
+        end_row = 5,
+        indent = "    ",
+        lines_snapshot = {
+          "    ",
+          "    >>> x = 1",
+          "    1",
+          "    ",
+        },
+        leading_blank_lines = {
+          "    ",
+        },
+        trailing_blank_lines = {
+          "    ",
+        },
+      }, {
+        ">>> y = 2",
+        "2",
+      })
+
+      t.assert_true(ok, err)
+      t.assert_deep_equal(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), {
+        '"""',
+        "    ",
+        "    >>> y = 2",
+        "    2",
+        "    ",
         '"""',
       })
     end,

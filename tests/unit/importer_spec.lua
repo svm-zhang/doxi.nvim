@@ -27,6 +27,46 @@ return {
     end,
   },
   {
+    name = "accepts multiple doctest groups separated only by blank lines",
+    fn = function()
+      local result, err = importer.parse_doctest_block({
+        "    >>> x = 1",
+        "    >>> x + 1",
+        "    2",
+        "    ",
+        "    >>> y = 2",
+        "    >>> y + 1",
+        "    3",
+      })
+
+      t.assert_equal(err, nil, "Blank lines between doctest groups should be accepted.")
+      t.assert_deep_equal(result.source_lines, {
+        "x = 1",
+        "x + 1",
+        "y = 2",
+        "y + 1",
+      })
+    end,
+  },
+  {
+    name = "rejects prose inside a selected doctest region",
+    fn = function()
+      local result, err = importer.parse_doctest_block({
+        "    >>> x = 1",
+        "    >>> x + 1",
+        "    2",
+        "    ",
+        "    Some doctest title:",
+        "    >>> y = 2",
+        "    >>> y + 1",
+        "    3",
+      })
+
+      t.assert_equal(result, nil, "Prose inside the selected doctest region should be rejected.")
+      t.assert_equal(err, "Invalid doctest block: unexpected prose or title at line 5.")
+    end,
+  },
+  {
     name = "rejects selections without prompts",
     fn = function()
       local result, err = importer.parse_doctest_block({
