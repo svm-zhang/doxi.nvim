@@ -40,6 +40,8 @@ local function create_session(target, interpreter_path)
     source_range = target.source_range,
     source_indent = target.source_indent or "",
     source_lines_snapshot = vim.deepcopy(target.source_lines_snapshot or {}),
+    source_leading_blank_lines = vim.deepcopy(target.source_leading_blank_lines or {}),
+    source_trailing_blank_lines = vim.deepcopy(target.source_trailing_blank_lines or {}),
     transcript_lines = {},
     interpreter_path = interpreter_path,
     closed = false,
@@ -58,7 +60,7 @@ local function create_session(target, interpreter_path)
 
   ui.set_editor_lines(session.view, target.editor_lines or {})
   ui.set_output_lines(session.view, {})
-  ui.set_hints_lines(session.view, ui.build_hint_lines(config.get().session_keymaps))
+  ui.set_hints(session.view, config.get().session_keymaps)
   session:_set_keymaps()
   ui.focus_editor(session.view)
 
@@ -281,6 +283,8 @@ function Session:apply()
     end_row = self.source_range.end_row,
     indent = self.source_indent,
     lines_snapshot = self.source_lines_snapshot,
+    leading_blank_lines = self.source_leading_blank_lines,
+    trailing_blank_lines = self.source_trailing_blank_lines,
   }, self.transcript_lines)
 
   if not ok then

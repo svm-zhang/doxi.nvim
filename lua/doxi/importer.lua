@@ -46,27 +46,41 @@ function M.parse_doctest_block(lines)
   end
 
   for index, line in ipairs(stripped) do
-    local statement = prompt_content(line, ">>> ")
-    if statement ~= nil then
-      saw_prompt = true
+    if util.is_blank(line) then
+      if not saw_prompt then
+        return nil, "Selection does not start with a doctest prompt."
+      end
+
       flush_statement()
-      current_statement = { statement }
       saw_output_since_prompt = false
     else
-      local continuation = prompt_content(line, "... ")
-      if continuation ~= nil and current_statement ~= nil and not saw_output_since_prompt then
-        if current_statement == nil then
-          return nil,
-            ("Invalid doctest block: continuation without a statement at line %d."):format(index)
-        end
-
-        table.insert(current_statement, continuation)
+      local statement = prompt_content(line, ">>> ")
+      if statement ~= nil then
+        saw_prompt = true
+        flush_statement()
+        current_statement = { statement }
+        saw_output_since_prompt = false
       else
-        if not saw_prompt then
-          return nil, "Selection does not start with a doctest prompt."
-        end
+        local continuation = prompt_content(line, "... ")
+        if continuation ~= nil then
+          if current_statement ~= nil and not saw_output_since_prompt then
+            table.insert(current_statement, continuation)
+          elseif current_statement == nil then
+            return nil,
+              ("Invalid doctest block: continuation without an active statement at line %d."):format(index)
+          else
+            saw_output_since_prompt = true
+          end
+        else
+          if not saw_prompt then
+            return nil, "Selection does not start with a doctest prompt."
+          end
 
-        if current_statement ~= nil then
+          if current_statement == nil then
+            return nil,
+              ("Invalid doctest block: unexpected prose or title at line %d."):format(index)
+          end
+
           saw_output_since_prompt = true
         end
       end

@@ -12,14 +12,6 @@ function M.indent_transcript(lines, indent)
   return indented
 end
 
-local function ensure_transcript(lines)
-  if not lines or #lines == 0 then
-    return nil, "Run some code before inserting a transcript."
-  end
-
-  return M.indent_transcript(lines, lines.indent or "")
-end
-
 function M.insert(target, transcript_lines)
   if not (target and target.bufnr and vim.api.nvim_buf_is_valid(target.bufnr)) then
     return nil, "The source buffer is no longer available."
@@ -57,10 +49,19 @@ function M.replace(target, transcript_lines)
   )
 
   if not util.table_equals(current_lines, target.lines_snapshot) then
-    return nil, "The selected doctest block changed before replacement. Aborting."
+    return nil, "The selected source range changed before apply. Aborting."
   end
 
   local replacement = M.indent_transcript(transcript_lines, target.indent or "")
+  local leading_blank_lines = vim.deepcopy(target.leading_blank_lines or {})
+  local trailing_blank_lines = vim.deepcopy(target.trailing_blank_lines or {})
+
+  if #leading_blank_lines > 0 then
+    vim.list_extend(leading_blank_lines, replacement)
+    replacement = leading_blank_lines
+  end
+
+  vim.list_extend(replacement, trailing_blank_lines)
 
   vim.api.nvim_buf_set_lines(target.bufnr, target.start_row - 1, target.end_row, false, replacement)
   return true
