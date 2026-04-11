@@ -14,14 +14,18 @@ permissions:
 
 jobs:
   test:
-    name: Headless Tests (${{ matrix.neovim }})
-    runs-on: ubuntu-latest
+    name: Headless Tests (${{ matrix.os }}, ${{ matrix.neovim }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        neovim:
-          - v0.10.4
-          - stable
+        include:
+          - os: ubuntu-latest
+            neovim: v0.10.4
+          - os: ubuntu-latest
+            neovim: stable
+          - os: macos-latest
+            neovim: stable
 
     steps:
       - name: Check out repository
