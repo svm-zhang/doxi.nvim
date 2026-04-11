@@ -13,6 +13,31 @@ local function job_is_running(job_id)
   return vim.fn.jobwait({ job_id }, 0)[1] == -1
 end
 
+local function consume_stream(partial, data)
+  local lines = {}
+  local current = partial or ""
+
+  if not data or #data == 0 then
+    return lines, current
+  end
+
+  for index, chunk in ipairs(data) do
+    chunk = chunk or ""
+    if index == 1 then
+      chunk = current .. chunk
+    end
+
+    if index == #data and data[#data] ~= "" then
+      current = chunk
+    else
+      table.insert(lines, chunk)
+      current = ""
+    end
+  end
+
+  return lines, current
+end
+
 function Backend:_fail_pending(message)
   local pending = self.pending
   self.pending = {}
@@ -24,8 +49,15 @@ function Backend:_fail_pending(message)
   end
 end
 
-function Backend:_on_stdout(data)
-  for _, line in ipairs(data or {}) do
+function Backend:_on_stdout(job_id, data)
+  if job_id ~= self.job_id then
+    return
+  end
+
+  local lines
+  lines, self.stdout_partial = consume_stream(self.stdout_partial, data)
+
+  for _, line in ipairs(lines) do
     if line ~= "" then
       local ok, decoded = pcall(util.json_decode, line)
       if not ok then
@@ -47,21 +79,42 @@ function Backend:_on_stdout(data)
   end
 end
 
-function Backend:_on_stderr(data)
-  local lines = {}
-
-  for _, line in ipairs(data or {}) do
-    if line ~= "" then
-      table.insert(lines, line)
-    end
+function Backend:_flush_stderr()
+  if self.stderr_partial ~= "" then
+    table.insert(self.stderr_lines, self.stderr_partial)
+    self.stderr_partial = ""
   end
 
-  if #lines > 0 then
-    self.last_stderr = table.concat(lines, "\n")
+  if #self.stderr_lines > 0 then
+    self.last_stderr = table.concat(self.stderr_lines, "\n")
+  else
+    self.last_stderr = nil
   end
 end
 
-function Backend:_on_exit(code)
+function Backend:_on_stderr(job_id, data)
+  if job_id ~= self.job_id then
+    return
+  end
+
+  local lines
+  lines, self.stderr_partial = consume_stream(self.stderr_partial, data)
+
+  for _, line in ipairs(lines) do
+    if line ~= "" then
+      table.insert(self.stderr_lines, line)
+    end
+  end
+
+  self:_flush_stderr()
+end
+
+function Backend:_on_exit(job_id, code)
+  if job_id ~= self.job_id then
+    return
+  end
+
+  self:_flush_stderr()
   self.job_id = nil
 
   if next(self.pending) == nil then
@@ -82,6 +135,9 @@ function Backend:start()
   end
 
   self.last_stderr = nil
+  self.stdout_partial = ""
+  self.stderr_partial = ""
+  self.stderr_lines = {}
 
   local job_id = vim.fn.jobstart({
     self.interpreter_path,
@@ -89,14 +145,14 @@ function Backend:start()
     self.bridge_path,
   }, {
     stdin = "pipe",
-    on_stdout = function(_, data, _)
-      self:_on_stdout(data)
+    on_stdout = function(channel_id, data, _)
+      self:_on_stdout(channel_id, data)
     end,
-    on_stderr = function(_, data, _)
-      self:_on_stderr(data)
+    on_stderr = function(channel_id, data, _)
+      self:_on_stderr(channel_id, data)
     end,
-    on_exit = function(_, code, _)
-      self:_on_exit(code)
+    on_exit = function(channel_id, code, _)
+      self:_on_exit(channel_id, code)
     end,
   })
 
@@ -139,9 +195,17 @@ function Backend:reset(callback)
   }, callback or function() end)
 end
 
+function Backend:restart(callback)
+  self:stop()
+
+  local ok, err = self:start()
+  vim.schedule(function()
+    (callback or function() end)(ok and { status = "ok" } or nil, err)
+  end)
+end
+
 function Backend:set_interpreter(path)
   self.interpreter_path = path
-  self:stop()
 end
 
 function Backend:stop()
@@ -151,6 +215,10 @@ function Backend:stop()
 
   local job_id = self.job_id
   self.job_id = nil
+  self.stdout_partial = ""
+  self.stderr_partial = ""
+  self.stderr_lines = {}
+  self.last_stderr = nil
 
   pcall(vim.fn.chansend, job_id, util.json_encode({
     action = "quit",
@@ -170,6 +238,9 @@ function M.new(opts)
     interpreter_path = opts.interpreter_path,
     job_id = nil,
     last_stderr = nil,
+    stdout_partial = "",
+    stderr_partial = "",
+    stderr_lines = {},
     next_request_id = 0,
     pending = {},
   }, Backend)

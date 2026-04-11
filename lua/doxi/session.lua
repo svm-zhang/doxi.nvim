@@ -230,7 +230,7 @@ function Session:run_selection(opts)
 end
 
 function Session:restart(after_restart)
-  self.backend:reset(function(_, err)
+  self.backend:restart(function(_, err)
     if self.closed then
       return
     end
@@ -267,12 +267,22 @@ function Session:env_switch()
 
     self.interpreter_path = path
     self.backend:set_interpreter(path)
+    self.backend:restart(function(_, err)
+      if self.closed then
+        return
+      end
 
-    if config.get().clear_transcript_on_env_switch then
-      self:set_transcript({})
-    end
+      if err then
+        util.notify(err, vim.log.levels.ERROR)
+        return
+      end
 
-    util.notify(("Switched environment to %s"):format(path))
+      if config.get().clear_transcript_on_env_switch then
+        self:set_transcript({})
+      end
+
+      util.notify(("Switched environment to %s"):format(path))
+    end)
   end)
 end
 
