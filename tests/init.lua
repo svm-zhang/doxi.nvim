@@ -50,6 +50,20 @@ function M.assert_deep_equal(actual, expected, message)
   end
 end
 
+function M.wait_until(predicate, timeout_ms, message)
+  local result
+  local ok = vim.wait(timeout_ms or 3000, function()
+    result = predicate()
+    return not not result
+  end, 20)
+
+  if not ok then
+    error(message or "Timed out waiting for condition.")
+  end
+
+  return result
+end
+
 function M.run_suite(modules)
   local failures = {}
   local total = 0

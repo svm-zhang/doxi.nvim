@@ -10,10 +10,12 @@ package.path = table.concat({
 }, ";")
 
 require("tests").run_suite({
+  "tests.unit.backend_spec",
   "tests.unit.importer_spec",
   "tests.unit.selection_spec",
   "tests.unit.transcript_spec",
   "tests.unit.env_spec",
   "tests.unit.inserter_spec",
   "tests.unit.ui_spec",
+  "tests.integration.session_spec",
 })
