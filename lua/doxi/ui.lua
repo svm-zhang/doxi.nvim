@@ -2,6 +2,17 @@ local config = require("doxi.config")
 local util = require("doxi.util")
 
 local M = {}
+local hint_namespace = vim.api.nvim_create_namespace("doxi.hints")
+
+local hint_entries = {
+  { key = "run_all", label = "Run all", leader = true },
+  { key = "run_selection", label = "Run selection", leader = true },
+  { key = "apply", label = "Apply", leader = true },
+  { key = "restart", label = "Restart", leader = true },
+  { key = "restart_rerun", label = "Fresh rerun", leader = true },
+  { key = "env_switch", label = "Env", leader = true },
+  { key = "cancel", label = "Cancel", leader = false },
+}
 
 local function set_buffer_defaults(bufnr)
   vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = bufnr })
@@ -17,11 +28,29 @@ local function set_window_defaults(winid, opts)
   vim.api.nvim_set_option_value("cursorline", opts.cursorline or false, { win = winid })
 end
 
+function M.resolve_size(value, available, minimum)
+  local resolved = available
+
+  if type(value) == "number" and value > 0 then
+    if value <= 1 then
+      resolved = math.floor(available * value)
+    else
+      resolved = math.floor(value)
+    end
+  end
+
+  resolved = math.min(available, resolved)
+  return math.max(minimum or 1, resolved)
+end
+
 function M.open(session)
   local ui_config = config.get().ui
-  local total_width = math.max(80, math.floor(vim.o.columns * ui_config.width))
-  local hints_height = math.max(2, ui_config.hints_height or 2)
-  local total_inner_height = math.max(14, math.floor((vim.o.lines - 10) * ui_config.height))
+  local hints = M.build_hints(config.get().session_keymaps)
+  local available_width = math.max(80, vim.o.columns - 4)
+  local total_width = M.resolve_size(ui_config.width, available_width, 80)
+  local hints_height = math.max(#hints.lines, ui_config.hints_height or 2)
+  local available_height = math.max(14, vim.o.lines - 10)
+  local total_inner_height = M.resolve_size(ui_config.height, available_height, 14)
   local editor_height = math.max(6, math.floor(total_inner_height * ui_config.editor_height))
   local output_height = math.max(5, total_inner_height - editor_height - hints_height)
   local total_height = editor_height + output_height + hints_height + 6
@@ -109,20 +138,174 @@ function M.set_hints_lines(view, lines)
   util.set_buf_lines(view.hints_bufnr, lines or {})
 end
 
-function M.build_hint_lines(keymaps)
+local function ensure_highlights()
+  vim.api.nvim_set_hl(0, "DoxiHintLabel", {
+    default = true,
+    link = "Title",
+  })
+  vim.api.nvim_set_hl(0, "DoxiHintKey", {
+    default = true,
+    link = "Special",
+  })
+  vim.api.nvim_set_hl(0, "DoxiHintPrefix", {
+    default = true,
+    link = "Comment",
+  })
+end
+
+local function build_entries(keymaps)
+  local entries = {}
+
+  for _, entry in ipairs(hint_entries) do
+    local key = keymaps[entry.key]
+    if type(key) ~= "string" or key == "" then
+      key = "unmapped"
+    end
+
+    table.insert(entries, {
+      label = entry.label,
+      key = key,
+      leader = entry.leader,
+    })
+  end
+
+  return entries
+end
+
+local function shared_leader_prefix(entries)
+  local prefix = "<leader>"
+  local found = false
+
+  for _, entry in ipairs(entries) do
+    if entry.leader then
+      if type(entry.key) ~= "string" or entry.key:sub(1, #prefix) ~= prefix then
+        return nil
+      end
+
+      found = true
+    end
+  end
+
+  if found then
+    return prefix
+  end
+
+  return nil
+end
+
+local function display_key(entry, leader_prefix)
+  if leader_prefix and entry.leader and entry.key:sub(1, #leader_prefix) == leader_prefix then
+    return entry.key:sub(#leader_prefix + 1)
+  end
+
+  return entry.key
+end
+
+local function render_entry(entry, leader_prefix)
+  local label = ("%s:"):format(entry.label)
+  local key = display_key(entry, leader_prefix)
+
   return {
-    table.concat({
-      ("%s run all"):format(keymaps.run_all),
-      ("%s run selection"):format(keymaps.run_selection),
-      ("%s apply"):format(keymaps.apply),
-    }, "   |   "),
-    table.concat({
-      ("%s restart"):format(keymaps.restart),
-      ("%s fresh rerun"):format(keymaps.restart_rerun),
-      ("%s env"):format(keymaps.env_switch),
-      ("%s cancel"):format(keymaps.cancel),
-    }, "   |   "),
+    text = ("%s %s"):format(label, key),
+    label = label,
+    key = key,
+    key_group = entry.key_group or "DoxiHintKey",
   }
+end
+
+local function build_rows(entries, leader_prefix)
+  local rows = {
+    {},
+    {},
+  }
+
+  if leader_prefix then
+    table.insert(rows[1], {
+      label = "Leader",
+      key = leader_prefix,
+      leader = false,
+      key_group = "DoxiHintPrefix",
+    })
+
+    for _, index in ipairs({ 1, 2, 3 }) do
+      table.insert(rows[1], entries[index])
+    end
+
+    for _, index in ipairs({ 4, 5, 6, 7 }) do
+      table.insert(rows[2], entries[index])
+    end
+  else
+    for _, index in ipairs({ 1, 2, 3, 4 }) do
+      table.insert(rows[1], entries[index])
+    end
+
+    for _, index in ipairs({ 5, 6, 7 }) do
+      table.insert(rows[2], entries[index])
+    end
+  end
+
+  return rows
+end
+
+function M.build_hints(keymaps)
+  local entries = build_entries(keymaps)
+  local leader_prefix = shared_leader_prefix(entries)
+  local rows = build_rows(entries, leader_prefix)
+  local lines = {}
+  local highlights = {}
+
+  for row_index, row in ipairs(rows) do
+    local line = ""
+
+    for entry_index, entry in ipairs(row) do
+      if entry_index > 1 then
+        line = line .. "    "
+      end
+
+      local start_col = #line
+      local rendered = render_entry(entry, leader_prefix)
+      line = line .. rendered.text
+
+      table.insert(highlights, {
+        line = row_index - 1,
+        start_col = start_col,
+        end_col = start_col + #rendered.label,
+        group = "DoxiHintLabel",
+      })
+      table.insert(highlights, {
+        line = row_index - 1,
+        start_col = start_col + #rendered.label + 1,
+        end_col = start_col + #rendered.text,
+        group = rendered.key_group,
+      })
+    end
+
+    table.insert(lines, line)
+  end
+
+  return {
+    lines = lines,
+    highlights = highlights,
+  }
+end
+
+function M.set_hints(view, keymaps)
+  ensure_highlights()
+
+  local hints = M.build_hints(keymaps)
+  M.set_hints_lines(view, hints.lines)
+  vim.api.nvim_buf_clear_namespace(view.hints_bufnr, hint_namespace, 0, -1)
+
+  for _, highlight in ipairs(hints.highlights) do
+    vim.api.nvim_buf_add_highlight(
+      view.hints_bufnr,
+      hint_namespace,
+      highlight.group,
+      highlight.line,
+      highlight.start_col,
+      highlight.end_col
+    )
+  end
 end
 
 function M.focus_editor(view)
