@@ -1,6 +1,6 @@
 local compat = require("doxi.compat")
 
-local ok, message = compat.check()
+local ok, message = compat.check_ready()
 if not ok then
   vim.api.nvim_echo({ { message, "ErrorMsg" } }, true, {})
   return

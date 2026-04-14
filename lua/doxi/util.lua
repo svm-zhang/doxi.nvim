@@ -1,3 +1,5 @@
+local compat = require("doxi.compat")
+
 local M = {}
 
 local function get_json_encode()
@@ -137,14 +139,8 @@ function M.delete_buf(bufnr)
   end
 end
 
-function M.get_visual_line_range()
-  local start_pos = vim.fn.getpos("'<")
-  local end_pos = vim.fn.getpos("'>")
-
-  local start_row = start_pos[2]
-  local end_row = end_pos[2]
-
-  if start_row == 0 or end_row == 0 then
+function M.normalize_line_range(start_row, end_row)
+  if not start_row or not end_row or start_row == 0 or end_row == 0 then
     return nil
   end
 
@@ -155,56 +151,198 @@ function M.get_visual_line_range()
   return start_row, end_row
 end
 
+local function is_active_visual_mode(mode)
+  return mode == "v"
+    or mode == "V"
+    or mode == "\22"
+    or mode == "s"
+    or mode == "S"
+    or mode == "\19"
+end
+
+function M.get_visual_line_range()
+  local mode = vim.api.nvim_get_mode().mode
+
+  if is_active_visual_mode(mode) then
+    local anchor = vim.fn.getpos("v")
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    return M.normalize_line_range(anchor[2], cursor[1])
+  end
+
+  local start_pos = vim.fn.getpos("'<")
+  local end_pos = vim.fn.getpos("'>")
+
+  return M.normalize_line_range(start_pos[2], end_pos[2])
+end
+
 function M.escape_visual_mode()
   local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
   vim.api.nvim_feedkeys(esc, "nx", false)
 end
 
-function M.probably_in_python_docstring(bufnr, row)
-  if vim.bo[bufnr].filetype ~= "python" then
+local function node_type(node)
+  if not node then
+    return nil
+  end
+
+  return node:type()
+end
+
+local function node_parent(node)
+  if not node then
+    return nil
+  end
+
+  return node:parent()
+end
+
+local function node_named_child(node, index)
+  if not node then
+    return nil
+  end
+
+  return node:named_child(index)
+end
+
+local function node_range(node)
+  if not node then
+    return nil
+  end
+
+  if type(node.range) == "function" then
+    return node:range()
+  end
+
+  return vim.treesitter.get_node_range(node)
+end
+
+function M._python_treesitter_required_message()
+  return compat.python_parser_message()
+end
+
+function M._same_node(left, right)
+  if not left or not right then
     return false
   end
 
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, row, false)
-  local active_delimiter = nil
-
-  for _, line in ipairs(lines) do
-    local index = 1
-    while true do
-      local triple_double = line:find('"""', index, true)
-      local triple_single = line:find("'''", index, true)
-      local position
-      local delimiter
-
-      if triple_double and triple_single then
-        if triple_double < triple_single then
-          position = triple_double
-          delimiter = '"""'
-        else
-          position = triple_single
-          delimiter = "'''"
-        end
-      elseif triple_double then
-        position = triple_double
-        delimiter = '"""'
-      elseif triple_single then
-        position = triple_single
-        delimiter = "'''"
-      else
-        break
-      end
-
-      if active_delimiter == delimiter then
-        active_delimiter = nil
-      elseif active_delimiter == nil then
-        active_delimiter = delimiter
-      end
-
-      index = position + 3
-    end
+  if left == right then
+    return true
   end
 
-  return active_delimiter ~= nil
+  if type(left.equal) == "function" then
+    return left:equal(right)
+  end
+
+  return false
+end
+
+function M._is_string_like_node(node)
+  local kind = node_type(node)
+  return kind == "string" or kind == "concatenated_string"
+end
+
+function M._first_named_child(node)
+  return node_named_child(node, 0)
+end
+
+function M._is_first_named_child(parent, node)
+  return M._same_node(M._first_named_child(parent), node)
+end
+
+function M._node_contains_row(node, row)
+  local start_row, _, end_row, _ = node_range(node)
+  if start_row == nil then
+    return false
+  end
+
+  local zero_based_row = row - 1
+  return start_row <= zero_based_row and zero_based_row <= end_row
+end
+
+function M._is_canonical_docstring_node(node)
+  if not M._is_string_like_node(node) then
+    return false
+  end
+
+  local statement = node_parent(node)
+  if node_type(statement) ~= "expression_statement" then
+    return false
+  end
+
+  if not M._is_first_named_child(statement, node) then
+    return false
+  end
+
+  local container = node_parent(statement)
+  local container_type = node_type(container)
+
+  if container_type == "module" then
+    return M._is_first_named_child(container, statement)
+  end
+
+  if container_type ~= "block" then
+    return false
+  end
+
+  if not M._is_first_named_child(container, statement) then
+    return false
+  end
+
+  local owner = node_parent(container)
+  local owner_type = node_type(owner)
+
+  return owner_type == "function_definition"
+    or owner_type == "async_function_definition"
+    or owner_type == "class_definition"
+end
+
+function M._find_canonical_docstring_node(node)
+  local current = node
+
+  while current do
+    if M._is_canonical_docstring_node(current) then
+      return current
+    end
+
+    current = node_parent(current)
+  end
+
+  return nil
+end
+
+function M._get_python_parser(bufnr)
+  if not vim.treesitter or type(vim.treesitter.get_parser) ~= "function" then
+    return nil, M._python_treesitter_required_message()
+  end
+
+  local parser = vim.treesitter.get_parser(bufnr, "python")
+  if not parser then
+    return nil, M._python_treesitter_required_message()
+  end
+
+  return parser
+end
+
+function M._get_python_node_at_row(bufnr, row)
+  local parser, err = M._get_python_parser(bufnr)
+  if not parser then
+    return nil, err
+  end
+
+  local row_index = math.max(row - 1, 0)
+  local line = vim.api.nvim_buf_get_lines(bufnr, row_index, row_index + 1, false)[1] or ""
+  local range = {
+    row_index,
+    0,
+    row_index,
+    #line,
+  }
+
+  parser:parse(range)
+
+  return parser:named_node_for_range(range, {
+    ignore_injections = true,
+  })
 end
 
 function M.selection_in_python_docstring(bufnr, start_row, end_row)
@@ -212,8 +350,42 @@ function M.selection_in_python_docstring(bufnr, start_row, end_row)
     return false
   end
 
-  return M.probably_in_python_docstring(bufnr, start_row)
-    and M.probably_in_python_docstring(bufnr, end_row)
+  local start_node, start_err = M._get_python_node_at_row(bufnr, start_row)
+  if not start_node then
+    if start_err then
+      return nil, start_err
+    end
+
+    return false
+  end
+
+  local end_node, end_err = M._get_python_node_at_row(bufnr, end_row)
+  if not end_node then
+    if end_err then
+      return nil, end_err
+    end
+
+    return false
+  end
+
+  local start_docstring = M._find_canonical_docstring_node(start_node)
+  local end_docstring = M._find_canonical_docstring_node(end_node)
+
+  if not start_docstring or not end_docstring then
+    return false
+  end
+
+  if not M._same_node(start_docstring, end_docstring) then
+    return false
+  end
+
+  if not M._node_contains_row(start_docstring, start_row)
+    or not M._node_contains_row(start_docstring, end_row)
+  then
+    return false
+  end
+
+  return true
 end
 
 return M
