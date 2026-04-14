@@ -25,6 +25,8 @@ jobs:
           - os: ubuntu-latest
             neovim: stable
           - os: macos-latest
+            neovim: v0.10.4
+          - os: macos-latest
             neovim: stable
 
     steps:
