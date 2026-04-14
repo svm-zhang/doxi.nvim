@@ -96,6 +96,23 @@ local function open_with_target(target)
   end)
 end
 
+local function validate_open_opts(opts)
+  if not opts or opts.range == 0 or not opts.line1 or not opts.line2 then
+    return nil, "Visual-select an empty docstring line or contiguous doctest block first."
+  end
+
+  local line1, line2 = util.normalize_line_range(opts.line1, opts.line2)
+  if not line1 or not line2 then
+    return nil, "Visual-select an empty docstring line or contiguous doctest block first."
+  end
+
+  return {
+    line1 = line1,
+    line2 = line2,
+    range = opts.range,
+  }
+end
+
 function Session:_map(bufnr, mode, lhs, rhs, desc)
   if not lhs or lhs == "" then
     return
@@ -332,19 +349,56 @@ function Session:close()
   self.transcript_lines = {}
 end
 
-function M.open(opts)
-  if not opts or opts.range == 0 or not opts.line1 or not opts.line2 then
-    util.notify("Visual-select an empty docstring line or contiguous doctest block first.", vim.log.levels.ERROR)
-    return
+function M.prepare_open(opts)
+  local normalized, err = validate_open_opts(opts)
+  if not normalized then
+    return nil, err
   end
 
-  local target, err = create_target(opts.line1, opts.line2)
+  local target, target_err = create_target(normalized.line1, normalized.line2)
   if not target then
+    return nil, target_err
+  end
+
+  return {
+    target = target,
+  }
+end
+
+function M.open_prepared(request)
+  if not request or not request.target then
+    return nil, "Invalid doxi open request."
+  end
+
+  open_with_target(request.target)
+  return true
+end
+
+function M.open(opts)
+  local request, err = M.prepare_open(opts)
+  if not request then
     util.notify(err, vim.log.levels.ERROR)
     return
   end
 
-  open_with_target(target)
+  M.open_prepared(request)
+end
+
+function M.open_visual()
+  local line1, line2 = util.get_visual_line_range()
+  util.escape_visual_mode()
+
+  local request, err = M.prepare_open({
+    line1 = line1,
+    line2 = line2,
+    range = (line1 and line2) and 2 or 0,
+  })
+  if not request then
+    util.notify(err, vim.log.levels.ERROR)
+    return
+  end
+
+  M.open_prepared(request)
 end
 
 function M.get_active()

@@ -7,7 +7,7 @@ local M = {}
 local did_setup = false
 
 function M.setup(opts)
-  compat.assert_supported()
+  compat.assert_ready()
   config.setup(opts or {})
   commands.setup()
   did_setup = true
@@ -19,6 +19,11 @@ function M.ensure_setup()
   end
 
   M.setup()
+end
+
+function M.open_visual()
+  M.ensure_setup()
+  require("doxi.session").open_visual()
 end
 
 return M

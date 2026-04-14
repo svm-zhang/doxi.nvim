@@ -228,8 +228,9 @@ function M.build_target(opts)
     return nil, "doxi.nvim only supports Python buffers."
   end
 
-  if not util.selection_in_python_docstring(opts.bufnr, opts.start_row, opts.end_row) then
-    return nil, "Select an empty docstring line or doctest block inside a Python docstring."
+  local in_docstring, docstring_err = util.selection_in_python_docstring(opts.bufnr, opts.start_row, opts.end_row)
+  if not in_docstring then
+    return nil, docstring_err or "Select an empty docstring line or doctest block inside a Python docstring."
   end
 
   local lines = vim.api.nvim_buf_get_lines(opts.bufnr, opts.start_row - 1, opts.end_row, false)

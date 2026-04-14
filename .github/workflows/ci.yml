@@ -25,11 +25,13 @@ jobs:
           - os: ubuntu-latest
             neovim: stable
           - os: macos-latest
+            neovim: v0.10.4
+          - os: macos-latest
             neovim: stable
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Neovim
         uses: rhysd/action-setup-vim@v1
