@@ -19,6 +19,15 @@ It is built for one narrow workflow: select a docstring example region, open a f
 
 - Neovim `0.10.0+`.
 - Python available on your machine.
+- Python Treesitter parser available to Neovim.
+
+The most common way to satisfy the parser requirement is with
+`nvim-treesitter`, but `doxi.nvim` uses Neovim's built-in Treesitter API at
+runtime.
+
+If the Python parser is missing, `doxi.nvim` does not enable normally. It fails
+early during setup with a clear message instead of waiting until the first
+`:DoxiOpen`.
 
 ## Installation
 
@@ -34,7 +43,9 @@ return {
     keys = {
       {
         "<leader>de",
-        ":DoxiOpen<CR>",
+        function()
+          require("doxi").open_visual()
+        end,
         mode = "x",
         desc = "Open doxi for selection",
       },
@@ -44,6 +55,13 @@ return {
     end,
   },
 }
+```
+
+After installation, make sure the Python Treesitter parser is actually
+available, then run:
+
+```vim
+:checkhealth doxi
 ```
 
 ## Configuration
@@ -83,7 +101,15 @@ Configuration notes:
 Suggested source-buffer keybind:
 
 ```lua
-vim.keymap.set("x", "<leader>de", ":DoxiOpen<CR>", { desc = "Open doxi" })
+vim.keymap.set("x", "<leader>de", function()
+  require("doxi").open_visual()
+end, { desc = "Open doxi" })
+```
+
+Recommended readiness check:
+
+```vim
+:checkhealth doxi
 ```
 
 ## How It Works
@@ -95,6 +121,29 @@ Every `doxi` session opens three floating panes:
 - Bottom pane: read-only key hints
 
 The editor pane uses plain Python source. You do not type `>>>` or `...` there. The transcript pane is generated from execution results and is the only thing applied back into the docstring.
+
+## Docstring Detection
+
+`doxi.nvim` uses Treesitter-backed canonical docstring detection in `v0.1.1+`.
+
+Accepted docstring targets:
+
+- Module docstrings.
+- Class docstrings.
+- Function and method docstrings.
+- Async function docstrings.
+
+The selection must stay wholly inside one canonical docstring node.
+
+Rejected string targets include:
+
+- Assigned triple-quoted strings.
+- Triple-quoted strings passed as function arguments.
+- Later standalone strings inside a function body.
+- Selections that cross outside the docstring.
+
+This means `doxi` is checking for real Python docstrings, not just any
+triple-quoted string that happens to contain doctest-like text.
 
 ## Use case 1: Edit an existing doctest block
 
@@ -199,14 +248,15 @@ These mappings apply inside the floating session buffers:
 
 Valid selections:
 
-- One or more blank lines inside a Python docstring.
-- A contiguous doctest region inside a Python docstring
-- Multiple doctest prompt/output groups separated only by blank lines
+- One or more blank lines inside one canonical Python docstring.
+- A contiguous doctest region inside one canonical Python docstring.
+- Multiple doctest prompt/output groups separated only by blank lines.
 
 Invalid selections:
 
-- Anything outside a Python docstring.
+- Anything outside a canonical Python docstring.
 - Non-Python buffers.
+- Triple-quoted strings that are not real docstrings.
 - Mixed prose and doctest content inside the selected region.
 - A region that starts with prose instead of a doctest prompt.
 - Broken doctest structure, such as a continuation line without an active statement.
@@ -215,6 +265,7 @@ Typical user-facing failures:
 
 - `Visual-select an empty docstring line or contiguous doctest block first.`
 - `Select an empty docstring line or doctest block inside a Python docstring.`
+- `doxi.nvim requires the Python Treesitter parser for docstring detection.`
 - `Selection does not start with a doctest prompt.`
 - `Invalid doctest block: unexpected prose or title at line N.`
 
@@ -225,18 +276,34 @@ Session-specific boundaries:
 - `:DoxiApply` always writes back to the original captured range.
 - If the original source range changed incompatibly before apply, `doxi` aborts instead of guessing.
 
-## Limitations and Boundaries
+## Behavior Boundaries
 
-`doxi.nvim` is not trying to be a notebook, terminal emulator, or AI example generator. It is a focused docstring example authoring tool.
+These are deliberate operating rules:
+
+- `:DoxiRunSelection` only works when the editor pane is focused and has a visual selection.
+- The transcript pane is read-only and cannot be edited directly.
+- Transcript rendering is plain doctest text, not terminal emulation or rich output.
+- `:DoxiApply` always writes back to the originally captured source range.
+- If the source range changed incompatibly before apply, `doxi` aborts instead of guessing.
+
+## Current Limitations
+
+These are real `v0.1.x` constraints:
 
 - Only Python is supported.
-- Selections must be inside a Python docstring.
+- `v0.1.1+` requires the Python Treesitter parser before `doxi.nvim` will enable normally.
+- Docstring detection is limited to canonical Python docstrings.
 - Doctest import supports contiguous doctest regions only.
 - Mixed prose plus doctest parsing is intentionally unsupported.
-- Docstring detection is heuristic rather than Treesitter-based.
-- The transcript pane always shows the latest run result instead of appending run history.
-- Transcript rendering is plain doctest text only.
-- The output pane is read-only and cannot be edited directly.
+- The transcript pane shows the latest run result only; it does not keep run history.
+
+## Non-Goals
+
+`doxi.nvim` is a focused docstring example authoring tool. It is not trying to be:
+
+- A notebook environment.
+- A terminal emulator.
+- An AI example generator.
 
 ## Testing
 
@@ -245,4 +312,3 @@ Run the headless test suite from the project root:
 ```sh
 nvim --headless -u NONE -c "lua dofile('scripts/run_tests.lua')"
 ```
-
