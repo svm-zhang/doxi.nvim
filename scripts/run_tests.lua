@@ -13,6 +13,8 @@ require("tests").run_suite({
   "tests.unit.backend_spec",
   "tests.unit.compat_spec",
   "tests.unit.util_spec",
+  "tests.unit.shared_imports_spec",
+  "tests.unit.examples_context_spec",
   "tests.unit.importer_spec",
   "tests.unit.selection_spec",
   "tests.unit.transcript_spec",

@@ -255,4 +255,18 @@ return {
       end)
     end,
   },
+  {
+    name = "_get_python_parser returns a controlled error when the parser is unavailable",
+    fn = function()
+      local bufnr = vim.api.nvim_create_buf(false, true)
+
+      with_override(vim.treesitter, "get_parser", function()
+        error("missing parser")
+      end, function()
+        local parser, err = util._get_python_parser(bufnr)
+        t.assert_equal(parser, nil)
+        t.assert_equal(err, util._python_treesitter_required_message())
+      end)
+    end,
+  },
 }

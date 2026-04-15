@@ -1,5 +1,6 @@
 local backend = require("doxi.backend")
 local env = require("doxi.env")
+local examples_context = require("doxi.examples_context")
 local session = require("doxi.session")
 local util = require("doxi.util")
 local t = require("tests")
@@ -39,6 +40,27 @@ local function run_with_docstring_gate_stub(fn)
   local ok, err = xpcall(fn, debug.traceback)
 
   util.selection_in_python_docstring = original_check
+
+  if not ok then
+    error(err)
+  end
+end
+
+local function run_with_context_stub(context, fn)
+  local original_context = examples_context.build
+
+  examples_context.build = function()
+    return vim.deepcopy(context or {
+      shared_imports = {
+        ordered = {},
+        seen = {},
+      },
+    })
+  end
+
+  local ok, err = xpcall(fn, debug.traceback)
+
+  examples_context.build = original_context
 
   if not ok then
     error(err)
@@ -121,78 +143,311 @@ return {
     fn = function()
       run_with_picker_stub(function()
         run_with_docstring_gate_stub(function()
-          local current_bufnr = vim.api.nvim_get_current_buf()
-          local source_bufnr = vim.api.nvim_create_buf(true, true)
+          run_with_context_stub(nil, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
 
-          vim.api.nvim_set_current_buf(source_bufnr)
-          vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
-          vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
-            "def f():",
-            '    """',
-            "    Examples:",
-            "        >>> before()",
-            "        1",
-            "",
-            "        After this:",
-            '    """',
-          })
-
-          local ok, err = xpcall(function()
-            session.open({
-              line1 = 6,
-              line2 = 6,
-              range = 2,
-            })
-
-            local active = t.wait_until(function()
-              return session.get_active()
-            end, 2000, "Session did not open.")
-
-            vim.api.nvim_buf_set_lines(active.editor_bufnr, 0, -1, false, {
-              "x = 1",
-              "x + 1",
-            })
-
-            session.run_all()
-
-            t.wait_until(function()
-              local lines = vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false)
-              return #lines > 0 and lines[#lines] == "2"
-            end, 3000, "Transcript output did not render.")
-
-            session.apply()
-
-            t.wait_until(function()
-              return session.get_active() == nil
-            end, 2000, "Session did not close after apply.")
-
-            t.assert_deep_equal(vim.api.nvim_buf_get_lines(source_bufnr, 0, -1, false), {
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
               "def f():",
               '    """',
               "    Examples:",
               "        >>> before()",
               "        1",
-              "        ",
-              "        >>> x = 1",
-              "        >>> x + 1",
-              "        2",
               "",
               "        After this:",
               '    """',
             })
-          end, debug.traceback)
 
-          if vim.api.nvim_buf_is_valid(source_bufnr) then
-            pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
-          end
+            local ok, err = xpcall(function()
+              session.open({
+                line1 = 6,
+                line2 = 6,
+                range = 2,
+              })
 
-          if vim.api.nvim_buf_is_valid(current_bufnr) then
-            vim.api.nvim_set_current_buf(current_bufnr)
-          end
+              local active = t.wait_until(function()
+                return session.get_active()
+              end, 2000, "Session did not open.")
 
-          if not ok then
-            error(err)
-          end
+              t.assert_deep_equal(vim.api.nvim_buf_get_lines(active.imports_bufnr, 0, -1, false), {
+                "No shared imports",
+              })
+
+              vim.api.nvim_buf_set_lines(active.editor_bufnr, 0, -1, false, {
+                "x = 1",
+                "x + 1",
+              })
+
+              session.run_all()
+
+              t.wait_until(function()
+                local lines = vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false)
+                return #lines > 0 and lines[#lines] == "2"
+              end, 3000, "Transcript output did not render.")
+
+              session.apply()
+
+              t.wait_until(function()
+                return session.get_active() == nil
+              end, 2000, "Session did not close after apply.")
+
+              t.assert_deep_equal(vim.api.nvim_buf_get_lines(source_bufnr, 0, -1, false), {
+                "def f():",
+                '    """',
+                "    Examples:",
+                "        >>> before()",
+                "        1",
+                "        ",
+                "        >>> x = 1",
+                "        >>> x + 1",
+                "        2",
+                "",
+                "        After this:",
+                '    """',
+              })
+            end, debug.traceback)
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
+        end)
+      end)
+    end,
+  },
+  {
+    name = "session replays shared imports before running editor code",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub({
+            shared_imports = {
+              ordered = { "from math import sqrt" },
+              seen = { ["from math import sqrt"] = true },
+            },
+          }, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
+
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+              "def f():",
+              '    """',
+              "    Examples:",
+              "        >>> from math import sqrt",
+              "",
+              '    """',
+            })
+
+            local ok, err = xpcall(function()
+              session.open({
+                line1 = 5,
+                line2 = 5,
+                range = 2,
+              })
+
+              local active = t.wait_until(function()
+                return session.get_active()
+              end, 2000, "Session did not open.")
+
+              t.assert_deep_equal(vim.api.nvim_buf_get_lines(active.imports_bufnr, 0, -1, false), {
+                "from math import sqrt",
+              })
+
+              vim.api.nvim_buf_set_lines(active.editor_bufnr, 0, -1, false, {
+                "sqrt(9)",
+              })
+
+              session.run_all()
+
+              t.wait_until(function()
+                local lines = vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false)
+                return #lines > 0 and lines[#lines] == "3.0"
+              end, 3000, "Shared-import run did not render.")
+
+              local lines = vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false)
+              t.assert_deep_equal(lines, {
+                ">>> sqrt(9)",
+                "3.0",
+              }, "Shared imports should not be copied into the visible transcript on success.")
+            end, debug.traceback)
+
+            if session.get_active() then
+              session.cancel()
+            end
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
+        end)
+      end)
+    end,
+  },
+  {
+    name = "shared import failures stop editor execution and surface the import error",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub({
+            shared_imports = {
+              ordered = { "from doxi_missing_module_for_tests import nope" },
+              seen = { ["from doxi_missing_module_for_tests import nope"] = true },
+            },
+          }, function()
+            with_override(util, "notify", function() end, function()
+              local current_bufnr = vim.api.nvim_get_current_buf()
+              local source_bufnr = vim.api.nvim_create_buf(true, true)
+
+              vim.api.nvim_set_current_buf(source_bufnr)
+              vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+              vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+                "def f():",
+                '    """',
+                "    Examples:",
+                "",
+                '    """',
+              })
+
+              local ok, err = xpcall(function()
+                session.open({
+                  line1 = 4,
+                  line2 = 4,
+                  range = 2,
+                })
+
+                local active = t.wait_until(function()
+                  return session.get_active()
+                end, 2000, "Session did not open.")
+
+                vim.api.nvim_buf_set_lines(active.editor_bufnr, 0, -1, false, {
+                  "nope()",
+                })
+
+                session.run_all()
+
+                local lines = t.wait_until(function()
+                  local current = vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false)
+                  if #current > 0 and current[1] == "Shared imports failed before running the current example:" then
+                    return current
+                  end
+
+                  return nil
+                end, 3000, "Shared import failure did not render.")
+
+                t.assert_true(vim.tbl_contains(lines, ">>> from doxi_missing_module_for_tests import nope"))
+                t.assert_true(vim.tbl_contains(lines, "ModuleNotFoundError: No module named 'doxi_missing_module_for_tests'"))
+                t.assert_true(not vim.tbl_contains(lines, ">>> nope()"), "Editor code should not run after a shared import failure.")
+              end, debug.traceback)
+
+              if session.get_active() then
+                session.cancel()
+              end
+
+              if vim.api.nvim_buf_is_valid(source_bufnr) then
+                pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+              end
+
+              if vim.api.nvim_buf_is_valid(current_bufnr) then
+                vim.api.nvim_set_current_buf(current_bufnr)
+              end
+
+              if not ok then
+                error(err)
+              end
+            end)
+          end)
+        end)
+      end)
+    end,
+  },
+  {
+    name = "restart_and_rerun replays shared imports against a fresh interpreter",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub({
+            shared_imports = {
+              ordered = { "from math import sqrt" },
+              seen = { ["from math import sqrt"] = true },
+            },
+          }, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
+
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+              "def f():",
+              '    """',
+              "    Examples:",
+              "",
+              '    """',
+            })
+
+            local ok, err = xpcall(function()
+              session.open({
+                line1 = 4,
+                line2 = 4,
+                range = 2,
+              })
+
+              local active = t.wait_until(function()
+                return session.get_active()
+              end, 2000, "Session did not open.")
+
+              vim.api.nvim_buf_set_lines(active.editor_bufnr, 0, -1, false, {
+                "sqrt(16)",
+              })
+
+              session.restart_and_rerun()
+
+              t.wait_until(function()
+                local lines = vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false)
+                return #lines > 0 and lines[#lines] == "4.0"
+              end, 3000, "Restart-and-rerun did not replay shared imports.")
+
+              t.assert_deep_equal(vim.api.nvim_buf_get_lines(active.output_bufnr, 0, -1, false), {
+                ">>> sqrt(16)",
+                "4.0",
+              })
+            end, debug.traceback)
+
+            if session.get_active() then
+              session.cancel()
+            end
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
         end)
       end)
     end,
@@ -281,25 +536,27 @@ return {
             with_override(util, "selection_in_python_docstring", function()
               return true
             end, function()
-              with_override(env, "pick_interpreter", function(_, callback)
-                picker_calls = picker_calls + 1
-                callback(nil)
-              end, function()
-                with_override(util, "get_visual_line_range", function()
-                  selection_index = selection_index + 1
-                  local range = selection_ranges[selection_index]
-                  return range[1], range[2]
+              run_with_context_stub(nil, function()
+                with_override(env, "pick_interpreter", function(_, callback)
+                  picker_calls = picker_calls + 1
+                  callback(nil)
                 end, function()
-                  session.open_visual()
-                  t.assert_equal(picker_calls, 1, "Valid doctest-only selection should reach the picker.")
-                  t.assert_equal(#notifications, 0)
+                  with_override(util, "get_visual_line_range", function()
+                    selection_index = selection_index + 1
+                    local range = selection_ranges[selection_index]
+                    return range[1], range[2]
+                  end, function()
+                    session.open_visual()
+                    t.assert_equal(picker_calls, 1, "Valid doctest-only selection should reach the picker.")
+                    t.assert_equal(#notifications, 0)
 
-                  session.open_visual()
-                  t.assert_equal(picker_calls, 1, "Invalid mixed selection should not reach the picker.")
-                  t.assert_true(type(notifications[#notifications]) == "string" and notifications[#notifications] ~= "")
+                    session.open_visual()
+                    t.assert_equal(picker_calls, 1, "Invalid mixed selection should not reach the picker.")
+                    t.assert_true(type(notifications[#notifications]) == "string" and notifications[#notifications] ~= "")
 
-                  session.open_visual()
-                  t.assert_equal(picker_calls, 2, "Returning to the valid selection should reach the picker again.")
+                    session.open_visual()
+                    t.assert_equal(picker_calls, 2, "Returning to the valid selection should reach the picker again.")
+                  end)
                 end)
               end)
             end)
