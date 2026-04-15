@@ -315,12 +315,12 @@ function M._get_python_parser(bufnr)
     return nil, M._python_treesitter_required_message()
   end
 
-  local parser = vim.treesitter.get_parser(bufnr, "python")
-  if not parser then
+  local ok, parser_or_err = pcall(vim.treesitter.get_parser, bufnr, "python")
+  if not ok or not parser_or_err then
     return nil, M._python_treesitter_required_message()
   end
 
-  return parser
+  return parser_or_err
 end
 
 function M._get_python_node_at_row(bufnr, row)
@@ -345,7 +345,7 @@ function M._get_python_node_at_row(bufnr, row)
   })
 end
 
-function M.selection_in_python_docstring(bufnr, start_row, end_row)
+function M.resolve_python_docstring(bufnr, start_row, end_row)
   if vim.bo[bufnr].filetype ~= "python" then
     return false
   end
@@ -385,7 +385,22 @@ function M.selection_in_python_docstring(bufnr, start_row, end_row)
     return false
   end
 
-  return true
+  local docstring_start_row, _, docstring_end_row, _ = node_range(start_docstring)
+
+  return {
+    node = start_docstring,
+    start_row = docstring_start_row + 1,
+    end_row = docstring_end_row + 1,
+  }
+end
+
+function M.selection_in_python_docstring(bufnr, start_row, end_row)
+  local resolved, err = M.resolve_python_docstring(bufnr, start_row, end_row)
+  if resolved == nil then
+    return nil, err
+  end
+
+  return resolved and true or false
 end
 
 return M
