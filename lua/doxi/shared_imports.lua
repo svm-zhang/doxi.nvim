@@ -37,12 +37,10 @@ local function prompt_content(line, prefix)
   return nil
 end
 
-local function collect_leading_statements(lines)
+local function collect_doctest_statements(lines)
   local stripped = strip_base_indent(lines)
   local statements = {}
   local current_statement = nil
-  local saw_prompt = false
-  local saw_output_since_prompt = false
 
   local function flush_statement()
     if current_statement == nil then
@@ -56,32 +54,19 @@ local function collect_leading_statements(lines)
   for _, line in ipairs(stripped) do
     if util.is_blank(line) then
       flush_statement()
-      saw_output_since_prompt = false
     else
       local statement = prompt_content(line, ">>> ")
       if statement ~= nil then
-        saw_prompt = true
         flush_statement()
         current_statement = { statement }
-        saw_output_since_prompt = false
       else
         local continuation = prompt_content(line, "... ")
         if continuation ~= nil then
-          if current_statement ~= nil and not saw_output_since_prompt then
+          if current_statement ~= nil then
             table.insert(current_statement, continuation)
-          else
-            return statements
           end
         else
-          if not saw_prompt then
-            return {}
-          end
-
-          if current_statement == nil then
-            return statements
-          end
-
-          saw_output_since_prompt = true
+          flush_statement()
         end
       end
     end
@@ -133,7 +118,7 @@ function M.discover(opts)
   end
 
   local lines = vim.api.nvim_buf_get_lines(opts.bufnr, opts.start_row - 1, opts.end_row, false)
-  local statements = collect_leading_statements(lines)
+  local statements = collect_doctest_statements(lines)
   local imports = empty_shared_imports()
 
   for _, statement_lines in ipairs(statements) do
