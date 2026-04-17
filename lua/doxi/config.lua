@@ -6,6 +6,7 @@ local defaults = {
   ui = {
     width = 100,
     height = 0.75,
+    imports_height = 2,
     editor_height = 0.45,
     hints_height = 2,
     border = "rounded",

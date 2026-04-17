@@ -1,4 +1,5 @@
 local config = require("doxi.config")
+local shared_imports = require("doxi.shared_imports")
 local util = require("doxi.util")
 
 local M = {}
@@ -46,24 +47,32 @@ end
 function M.open(session)
   local ui_config = config.get().ui
   local hints = M.build_hints(config.get().session_keymaps)
+  local imports_lines = shared_imports.render_lines(session.shared_imports)
   local available_width = math.max(80, vim.o.columns - 4)
   local total_width = M.resolve_size(ui_config.width, available_width, 80)
+  local imports_height = math.max(#imports_lines, ui_config.imports_height or 2)
   local hints_height = math.max(#hints.lines, ui_config.hints_height or 2)
   local available_height = math.max(14, vim.o.lines - 10)
-  local total_inner_height = M.resolve_size(ui_config.height, available_height, 14)
+  local total_inner_height = M.resolve_size(ui_config.height, available_height, 16)
   local editor_height = math.max(6, math.floor(total_inner_height * ui_config.editor_height))
-  local output_height = math.max(5, total_inner_height - editor_height - hints_height)
-  local total_height = editor_height + output_height + hints_height + 6
+  local output_height = math.max(5, total_inner_height - imports_height - editor_height - hints_height)
+  local total_height = imports_height + editor_height + output_height + hints_height + 8
   local row = math.max(1, math.floor((vim.o.lines - total_height) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - total_width) / 2))
 
+  local imports_bufnr = vim.api.nvim_create_buf(false, true)
   local editor_bufnr = vim.api.nvim_create_buf(false, true)
   local output_bufnr = vim.api.nvim_create_buf(false, true)
   local hints_bufnr = vim.api.nvim_create_buf(false, true)
 
+  set_buffer_defaults(imports_bufnr)
   set_buffer_defaults(editor_bufnr)
   set_buffer_defaults(output_bufnr)
   set_buffer_defaults(hints_bufnr)
+
+  vim.api.nvim_set_option_value("filetype", "text", { buf = imports_bufnr })
+  vim.api.nvim_set_option_value("modifiable", false, { buf = imports_bufnr })
+  vim.api.nvim_set_option_value("readonly", true, { buf = imports_bufnr })
 
   vim.api.nvim_set_option_value("filetype", "python", { buf = editor_bufnr })
   vim.api.nvim_set_option_value("modifiable", true, { buf = editor_bufnr })
@@ -76,9 +85,21 @@ function M.open(session)
   vim.api.nvim_set_option_value("modifiable", false, { buf = hints_bufnr })
   vim.api.nvim_set_option_value("readonly", true, { buf = hints_bufnr })
 
-  local editor_winid = vim.api.nvim_open_win(editor_bufnr, true, {
+  local imports_winid = vim.api.nvim_open_win(imports_bufnr, false, {
     relative = "editor",
     row = row,
+    col = col,
+    width = total_width,
+    height = imports_height,
+    border = ui_config.border,
+    style = "minimal",
+    title = " shared imports ",
+    title_pos = "center",
+  })
+
+  local editor_winid = vim.api.nvim_open_win(editor_bufnr, true, {
+    relative = "editor",
+    row = row + imports_height + 2,
     col = col,
     width = total_width,
     height = editor_height,
@@ -90,7 +111,7 @@ function M.open(session)
 
   local output_winid = vim.api.nvim_open_win(output_bufnr, false, {
     relative = "editor",
-    row = row + editor_height + 2,
+    row = row + imports_height + editor_height + 4,
     col = col,
     width = total_width,
     height = output_height,
@@ -102,7 +123,7 @@ function M.open(session)
 
   local hints_winid = vim.api.nvim_open_win(hints_bufnr, false, {
     relative = "editor",
-    row = row + editor_height + output_height + 4,
+    row = row + imports_height + editor_height + output_height + 6,
     col = col,
     width = total_width,
     height = hints_height,
@@ -112,11 +133,14 @@ function M.open(session)
     title_pos = "center",
   })
 
+  set_window_defaults(imports_winid, { cursorline = false })
   set_window_defaults(editor_winid, { cursorline = true })
   set_window_defaults(output_winid, { cursorline = false })
   set_window_defaults(hints_winid, { cursorline = false })
 
   return {
+    imports_bufnr = imports_bufnr,
+    imports_winid = imports_winid,
     editor_bufnr = editor_bufnr,
     editor_winid = editor_winid,
     output_bufnr = output_bufnr,
@@ -124,6 +148,10 @@ function M.open(session)
     hints_bufnr = hints_bufnr,
     hints_winid = hints_winid,
   }
+end
+
+function M.set_imports_lines(view, lines)
+  util.set_buf_lines(view.imports_bufnr, lines or {})
 end
 
 function M.set_editor_lines(view, lines)
@@ -319,9 +347,11 @@ function M.close(view)
     return
   end
 
+  util.close_win(view.imports_winid)
   util.close_win(view.editor_winid)
   util.close_win(view.output_winid)
   util.close_win(view.hints_winid)
+  util.delete_buf(view.imports_bufnr)
   util.delete_buf(view.editor_bufnr)
   util.delete_buf(view.output_bufnr)
   util.delete_buf(view.hints_bufnr)

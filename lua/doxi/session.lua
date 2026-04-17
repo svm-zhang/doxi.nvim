@@ -1,8 +1,10 @@
 local backend = require("doxi.backend")
 local config = require("doxi.config")
 local env = require("doxi.env")
+local examples_context = require("doxi.examples_context")
 local inserter = require("doxi.inserter")
 local selection = require("doxi.selection")
+local shared_imports = require("doxi.shared_imports")
 local transcript = require("doxi.transcript")
 local ui = require("doxi.ui")
 local util = require("doxi.util")
@@ -30,7 +32,7 @@ local function close_active_session()
   end
 end
 
-local function create_session(target, interpreter_path)
+local function create_session(target, interpreter_path, context)
   close_active_session()
 
   local session = setmetatable({
@@ -43,6 +45,10 @@ local function create_session(target, interpreter_path)
     source_leading_blank_lines = vim.deepcopy(target.source_leading_blank_lines or {}),
     source_trailing_blank_lines = vim.deepcopy(target.source_trailing_blank_lines or {}),
     transcript_lines = {},
+    shared_imports = vim.deepcopy((context and context.shared_imports) or {
+      ordered = {},
+      seen = {},
+    }),
     interpreter_path = interpreter_path,
     closed = false,
   }, Session)
@@ -51,6 +57,8 @@ local function create_session(target, interpreter_path)
     interpreter_path = interpreter_path,
   })
   session.view = ui.open(session)
+  session.imports_bufnr = session.view.imports_bufnr
+  session.imports_winid = session.view.imports_winid
   session.editor_bufnr = session.view.editor_bufnr
   session.editor_winid = session.view.editor_winid
   session.output_bufnr = session.view.output_bufnr
@@ -58,6 +66,7 @@ local function create_session(target, interpreter_path)
   session.hints_bufnr = session.view.hints_bufnr
   session.hints_winid = session.view.hints_winid
 
+  ui.set_imports_lines(session.view, shared_imports.render_lines(session.shared_imports))
   ui.set_editor_lines(session.view, target.editor_lines or {})
   ui.set_output_lines(session.view, {})
   ui.set_hints(session.view, config.get().session_keymaps)
@@ -81,15 +90,15 @@ local function create_target(line1, line2)
   })
 end
 
-local function open_with_target(target)
+local function open_with_request(request)
   env.pick_interpreter({
-    bufnr = target.source_bufnr,
+    bufnr = request.target.source_bufnr,
   }, function(path)
     if not path then
       return
     end
 
-    local _, err = create_session(target, path)
+    local _, err = create_session(request.target, path, request.context)
     if err then
       util.notify(err, vim.log.levels.ERROR)
     end
@@ -163,6 +172,30 @@ function Session:_set_keymaps()
     self:close()
   end, "Cancel example session")
 
+  self:_map(self.imports_bufnr, "n", keymaps.run_all, function()
+    self:run_all()
+  end, "Run all example code")
+
+  self:_map(self.imports_bufnr, "n", keymaps.restart, function()
+    self:restart()
+  end, "Restart Python session")
+
+  self:_map(self.imports_bufnr, "n", keymaps.restart_rerun, function()
+    self:restart_and_rerun()
+  end, "Restart and rerun example code")
+
+  self:_map(self.imports_bufnr, "n", keymaps.env_switch, function()
+    self:env_switch()
+  end, "Switch Python environment")
+
+  self:_map(self.imports_bufnr, "n", keymaps.apply, function()
+    self:apply()
+  end, "Apply transcript")
+
+  self:_map(self.imports_bufnr, "n", keymaps.cancel, function()
+    self:close()
+  end, "Cancel example session")
+
   self:_map(self.hints_bufnr, "n", keymaps.run_all, function()
     self:run_all()
   end, "Run all example code")
@@ -201,17 +234,31 @@ function Session:get_editor_lines()
   return vim.api.nvim_buf_get_lines(self.editor_bufnr, 0, -1, false)
 end
 
-function Session:_execute(code)
-  if self.closed then
-    return
+function Session:_shared_import_code()
+  if not self.shared_imports or not self.shared_imports.ordered or #self.shared_imports.ordered == 0 then
+    return nil
   end
 
-  if util.is_blank(code) then
-    self:set_transcript({})
-    util.notify("No code to run.", vim.log.levels.WARN)
-    return
+  return table.concat(self.shared_imports.ordered, "\n")
+end
+
+function Session:_set_shared_import_failure(result, err)
+  local lines = {
+    "Shared imports failed before running the current example:",
+  }
+
+  if err and err ~= "" then
+    table.insert(lines, err)
+  else
+    table.insert(lines, "")
+    vim.list_extend(lines, transcript.render_chunks(result and result.chunks or {}))
   end
 
+  self:set_transcript(lines)
+  util.notify("Shared imports failed before running the current example.", vim.log.levels.ERROR)
+end
+
+function Session:_execute_code(code)
   self.backend:execute(code, function(result, err)
     if self.closed then
       return
@@ -224,6 +271,45 @@ function Session:_execute(code)
 
     local lines = transcript.render_chunks(result and result.chunks or {})
     self:set_transcript(lines)
+  end)
+end
+
+function Session:_execute(code)
+  if self.closed then
+    return
+  end
+
+  if util.is_blank(code) then
+    self:set_transcript({})
+    util.notify("No code to run.", vim.log.levels.WARN)
+    return
+  end
+
+  local import_code = self:_shared_import_code()
+  if util.is_blank(import_code) then
+    self:_execute_code(code)
+    return
+  end
+
+  self.backend:execute(import_code, function(result, err)
+    if self.closed then
+      return
+    end
+
+    if err then
+      self:_set_shared_import_failure(nil, err)
+      return
+    end
+
+    local chunks = result and result.chunks or {}
+    for _, chunk in ipairs(chunks) do
+      if chunk.status == "error" then
+        self:_set_shared_import_failure(result, nil)
+        return
+      end
+    end
+
+    self:_execute_code(code)
   end)
 end
 
@@ -360,8 +446,18 @@ function M.prepare_open(opts)
     return nil, target_err
   end
 
+  local context, context_err = examples_context.build({
+    bufnr = target.source_bufnr,
+    start_row = normalized.line1,
+    end_row = normalized.line2,
+  })
+  if not context then
+    return nil, context_err
+  end
+
   return {
     target = target,
+    context = context,
   }
 end
 
@@ -370,7 +466,7 @@ function M.open_prepared(request)
     return nil, "Invalid doxi open request."
   end
 
-  open_with_target(request.target)
+  open_with_request(request)
   return true
 end
 
