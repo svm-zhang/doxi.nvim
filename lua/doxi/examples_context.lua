@@ -48,6 +48,25 @@ local function find_examples_headers(lines, start_row)
   return headers
 end
 
+local function multiple_headers_error(headers)
+  local saw_google = false
+  local saw_numpy = false
+
+  for _, header in ipairs(headers or {}) do
+    if header.kind == "google" then
+      saw_google = true
+    elseif header.kind == "numpy" then
+      saw_numpy = true
+    end
+  end
+
+  if saw_google and saw_numpy then
+    return "doxi.nvim found mixed Google-style and NumPy-style Examples sections in one docstring. Use one Examples section style per docstring."
+  end
+
+  return "doxi.nvim supports only one Examples section per docstring."
+end
+
 function M.build(opts)
   local docstring, err = util.resolve_python_docstring(opts.bufnr, opts.start_row, opts.end_row)
   if not docstring then
@@ -67,7 +86,7 @@ function M.build(opts)
   end
 
   if #headers > 1 then
-    return nil, "doxi.nvim supports only one Examples section per docstring."
+    return nil, multiple_headers_error(headers)
   end
 
   local header = headers[1]

@@ -166,7 +166,37 @@ return {
     end,
   },
   {
-    name = "rejects docstrings with more than one supported Examples section",
+    name = "rejects docstrings with more than one same-style Examples section",
+    fn = function()
+      local bufnr = create_python_buffer({
+        '"""',
+        "Examples:",
+        "    >>> first()",
+        "",
+        "Examples:",
+        "    >>> second()",
+        '"""',
+      })
+
+      with_override(util, "resolve_python_docstring", function()
+        return {
+          start_row = 1,
+          end_row = 7,
+        }
+      end, function()
+        local context, err = examples_context.build({
+          bufnr = bufnr,
+          start_row = 6,
+          end_row = 6,
+        })
+
+        t.assert_equal(context, nil)
+        t.assert_equal(err, "doxi.nvim supports only one Examples section per docstring.")
+      end)
+    end,
+  },
+  {
+    name = "rejects docstrings that mix Google-style and NumPy-style Examples sections",
     fn = function()
       local bufnr = create_python_buffer({
         '"""',
@@ -192,7 +222,10 @@ return {
         })
 
         t.assert_equal(context, nil)
-        t.assert_equal(err, "doxi.nvim supports only one Examples section per docstring.")
+        t.assert_equal(
+          err,
+          "doxi.nvim found mixed Google-style and NumPy-style Examples sections in one docstring. Use one Examples section style per docstring."
+        )
       end)
     end,
   },
