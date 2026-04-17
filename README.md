@@ -8,6 +8,7 @@ It is built for one narrow workflow: select a docstring example region, open a f
 
 - Author new examples from a blank docstring line.
 - Edit an existing contiguous doctest block by importing it back into plain Python code.
+- Reuse shared imports from the top of one supported `Examples` section.
 - Run all code or a visual selection from the session editor.
 - Render deterministic doctest transcripts with `>>>` and `...` prompts.
 - Keep a persistent Python subprocess alive for the session lifetime.
@@ -75,6 +76,7 @@ require("doxi").setup({
   ui = {
     width = 100,
     height = 0.75,
+    imports_height = 2,
     editor_height = 0.45,
     hints_height = 2,
     border = "rounded",
@@ -95,6 +97,7 @@ Configuration notes:
 
 - `python_path` takes priority over automatic interpreter discovery
 - `ui.width` accepts either a fixed number of columns such as `100` or a ratio such as `0.75`
+- `ui.imports_height` sets the minimum height of the read-only shared-imports pane
 - `clear_transcript_on_env_switch = true` clears the output pane after a real environment change
 - `session_keymaps` only affect the floating session buffers, not your source buffer
 
@@ -114,13 +117,14 @@ Recommended readiness check:
 
 ## How It Works
 
-Every `doxi` session opens three floating panes:
+Every `doxi` session opens four floating panes:
 
-- Top pane: editable Python code
-- Middle pane: read-only doctest transcript
+- Top pane: read-only shared imports
+- Upper-middle pane: editable Python code
+- Lower-middle pane: read-only doctest transcript
 - Bottom pane: read-only key hints
 
-The editor pane uses plain Python source. You do not type `>>>` or `...` there. The transcript pane is generated from execution results and is the only thing applied back into the docstring.
+The editor pane uses plain Python source. You do not type `>>>` or `...` there. The shared-imports pane is read-only and shows the imports that `doxi` will replay before runs. The transcript pane is generated from execution results and is the only thing applied back into the docstring.
 
 ## Docstring Detection
 
@@ -151,7 +155,7 @@ This is the most direct workflow and the easiest way to use the plugin.
 
 1. In a Python docstring, visually select a contiguous doctest block.
 2. Run `:'<,'>DoxiOpen` or trigger your visual-mode mapping.
-3. `doxi` strips the prompts and output, then opens the editor pane with executable Python code.
+3. `doxi` strips the prompts and output, discovers shared imports above the selected block when applicable, and opens the session.
 4. Change the code.
 5. Run it again inside the session.
 6. Apply the transcript back to the original selection.
@@ -178,6 +182,10 @@ f(3)
 1 / 0
 ```
 
+If the selected block is below a top-of-section import prologue, those imports
+appear in the read-only imports pane and are replayed before runs. They do not
+appear in the visible transcript unless shared import replay fails.
+
 ## Use case 2: Create a new example from scratch
 
 1. In a Python docstring, visually select an empty line where the example should go.
@@ -188,9 +196,44 @@ f(3)
 
 `doxi` preserves the surrounding docstring indentation and blank-line separators. If you open from a blank line below an existing doctest region, it also synthesizes the leading separator needed to keep the examples visually separated.
 
+If you open above the previous top block in the section, shared imports below
+that insertion point are not inherited.
+
+## Shared Import Rules
+
+`doxi.nvim` supports shared imports inside one supported `Examples` section.
+
+Supported header forms:
+
+- Google-style:
+  - `Examples:`
+- NumPy-style:
+  - `Examples`
+  - `--------`
+
+Discovery rules:
+
+- `doxi` scans from the supported `Examples` header down to the selected block.
+- Blank lines and prose titles are ignored.
+- Only doctest statements are considered for shared-import discovery.
+- Shared imports are the leading consecutive import statements in that doctest stream.
+- Discovery stops at the first non-import doctest statement.
+- Discovery never scans past the selected block boundary.
+
+Practical consequences:
+
+- The first doctest block in a section has no inherited shared imports.
+- Later blocks can inherit top-of-section imports.
+- Prose between blocks does not break shared-import discovery.
+- Later block-local imports are not promoted into shared imports.
+- Successful shared-import replay stays out of the visible transcript.
+- If shared-import replay fails, editor code does not run and the failure is
+  shown in the transcript pane.
+
 ## Interpreter Discovery
 
-Before the session opens, `doxi` asks you to choose a Python interpreter. Discovery currently checks, in priority order:
+Before the session opens, `doxi` asks you to choose a Python interpreter. Discovery
+currently checks, in priority order:
 
 1. Configured `python_path`.
 2. Active `VIRTUAL_ENV`.
@@ -251,6 +294,7 @@ Valid selections:
 - One or more blank lines inside one canonical Python docstring.
 - A contiguous doctest region inside one canonical Python docstring.
 - Multiple doctest prompt/output groups separated only by blank lines.
+- A selection inside one supported `Examples` section.
 
 Invalid selections:
 
@@ -260,6 +304,7 @@ Invalid selections:
 - Mixed prose and doctest content inside the selected region.
 - A region that starts with prose instead of a doctest prompt.
 - Broken doctest structure, such as a continuation line without an active statement.
+- A docstring with more than one supported `Examples` section.
 
 Typical user-facing failures:
 
@@ -268,6 +313,8 @@ Typical user-facing failures:
 - `doxi.nvim requires the Python Treesitter parser for docstring detection.`
 - `Selection does not start with a doctest prompt.`
 - `Invalid doctest block: unexpected prose or title at line N.`
+- `doxi.nvim supports only one Examples section per docstring.`
+- `doxi.nvim found mixed Google-style and NumPy-style Examples sections in one docstring. Use one Examples section style per docstring.`
 
 Session-specific boundaries:
 
@@ -280,6 +327,7 @@ Session-specific boundaries:
 
 These are deliberate operating rules:
 
+- The shared-imports pane is read-only and exists only to show replayed import context.
 - `:DoxiRunSelection` only works when the editor pane is focused and has a visual selection.
 - The transcript pane is read-only and cannot be edited directly.
 - Transcript rendering is plain doctest text, not terminal emulation or rich output.
@@ -293,6 +341,7 @@ These are real `v0.1.x` constraints:
 - Only Python is supported.
 - `v0.1.1+` requires the Python Treesitter parser before `doxi.nvim` will enable normally.
 - Docstring detection is limited to canonical Python docstrings.
+- Shared import context is limited to one supported `Examples` section per docstring.
 - Doctest import supports contiguous doctest regions only.
 - Mixed prose plus doctest parsing is intentionally unsupported.
 - The transcript pane shows the latest run result only; it does not keep run history.
