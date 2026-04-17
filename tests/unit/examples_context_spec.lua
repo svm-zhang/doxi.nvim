@@ -165,4 +165,76 @@ return {
       end)
     end,
   },
+  {
+    name = "rejects docstrings with more than one supported Examples section",
+    fn = function()
+      local bufnr = create_python_buffer({
+        '"""',
+        "Examples:",
+        "    >>> first()",
+        "",
+        "Examples",
+        "--------",
+        ">>> second()",
+        '"""',
+      })
+
+      with_override(util, "resolve_python_docstring", function()
+        return {
+          start_row = 1,
+          end_row = 8,
+        }
+      end, function()
+        local context, err = examples_context.build({
+          bufnr = bufnr,
+          start_row = 7,
+          end_row = 7,
+        })
+
+        t.assert_equal(context, nil)
+        t.assert_equal(err, "doxi.nvim supports only one Examples section per docstring.")
+      end)
+    end,
+  },
+  {
+    name = "does not treat doctest output as a second Examples header",
+    fn = function()
+      local bufnr = create_python_buffer({
+        '"""',
+        "Examples:",
+        '    >>> print("Examples:")',
+        "    Examples:",
+        "",
+        "    >>> done()",
+        '"""',
+      })
+      local discover_args
+
+      with_override(util, "resolve_python_docstring", function()
+        return {
+          start_row = 1,
+          end_row = 7,
+        }
+      end, function()
+        with_override(shared_imports, "discover", function(opts)
+          discover_args = opts
+          return {
+            ordered = {},
+            seen = {},
+          }
+        end, function()
+          local context, err = examples_context.build({
+            bufnr = bufnr,
+            start_row = 6,
+            end_row = 6,
+          })
+
+          t.assert_equal(err, nil)
+          t.assert_equal(context.header.kind, "google")
+          t.assert_equal(discover_args.start_row, 3)
+          t.assert_equal(discover_args.end_row, 5)
+        end)
+      end)
+    end,
+  },
 }

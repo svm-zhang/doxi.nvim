@@ -104,7 +104,7 @@ return {
     end,
   },
   {
-    name = "ignores sections that start with prose before any doctest prompts",
+    name = "ignores prose before the doctest stream and still discovers top imports",
     fn = function()
       local bufnr = create_buffer({
         "        First explain the example.",
@@ -120,7 +120,71 @@ return {
       })
 
       t.assert_equal(err, nil)
-      t.assert_deep_equal(imports.ordered, {})
+      t.assert_deep_equal(imports.ordered, {
+        "import os",
+      })
+    end,
+  },
+  {
+    name = "ignores prose titles between doctest blocks when discovering shared imports",
+    fn = function()
+      local bufnr = create_buffer({
+        "        Variants in cis:",
+        "",
+        "        >>> from tinyhgvs import parse_hgvs",
+        '        >>> desc = parse_hgvs("A").description',
+        "        >>> len(tuple(desc))",
+        "        1",
+        "",
+        "        Two alleles in trans:",
+        "",
+        '        >>> desc = parse_hgvs("B").description',
+        "        >>> len(tuple(desc))",
+        "        2",
+      })
+
+      local imports, err = shared_imports.discover({
+        bufnr = bufnr,
+        start_row = 1,
+        end_row = 12,
+        parser_factory = parser_factory,
+      })
+
+      t.assert_equal(err, nil)
+      t.assert_deep_equal(imports.ordered, {
+        "from tinyhgvs import parse_hgvs",
+      })
+    end,
+  },
+  {
+    name = "does not promote later block-local imports after the first non-import doctest statement",
+    fn = function()
+      local bufnr = create_buffer({
+        "        >>> from pkg import x",
+        "        >>> x()",
+        "        1",
+        "",
+        "        Another block:",
+        "",
+        "        >>> import json",
+        '        >>> json.dumps({"x": 1})',
+        [[        '{"x": 1}']],
+        "",
+        "        >>> x()",
+        "        2",
+      })
+
+      local imports, err = shared_imports.discover({
+        bufnr = bufnr,
+        start_row = 1,
+        end_row = 12,
+        parser_factory = parser_factory,
+      })
+
+      t.assert_equal(err, nil)
+      t.assert_deep_equal(imports.ordered, {
+        "from pkg import x",
+      })
     end,
   },
   {
