@@ -48,9 +48,10 @@ return {
     end,
   },
   {
-    name = "opens the editor pane with a visible sign column and lower zindex",
+    name = "opens the editor pane with a visible sign column, lower zindex, and synthetic buffer name",
     fn = function()
       local view = ui.open({
+        editor_buffer_name = "/project/doxi-test.py",
         workflow = "new example",
         shared_imports = {
           ordered = {},
@@ -60,6 +61,8 @@ return {
 
       local ok, err = xpcall(function()
         t.assert_equal(vim.api.nvim_get_option_value("signcolumn", { win = view.editor_winid }), "yes:1")
+        t.assert_equal(vim.api.nvim_get_option_value("buftype", { buf = view.editor_bufnr }), "nofile")
+        t.assert_equal(vim.api.nvim_buf_get_name(view.editor_bufnr), "/project/doxi-test.py")
         t.assert_equal(vim.api.nvim_win_get_config(view.editor_winid).zindex, 40)
         t.assert_equal(vim.api.nvim_win_get_config(view.output_winid).zindex, 40)
       end, debug.traceback)

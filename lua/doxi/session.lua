@@ -33,8 +33,31 @@ local function close_active_session()
   end
 end
 
+local function bind_common_keymaps(session, bufnr, keymaps)
+  session:_map(bufnr, "n", keymaps.run_all, function()
+    session:run_all()
+  end, "Run all example code")
+
+  session:_map(bufnr, "n", keymaps.restart, function()
+    session:restart()
+  end, "Restart Python session")
+
+  session:_map(bufnr, "n", keymaps.restart_rerun, function()
+    session:restart_and_rerun()
+  end, "Restart and rerun example code")
+
+  session:_map(bufnr, "n", keymaps.apply, function()
+    session:apply()
+  end, "Apply transcript")
+
+  session:_map(bufnr, "n", keymaps.cancel, function()
+    session:close()
+  end, "Cancel example session")
+end
+
 local function create_session(target, interpreter_info, context)
   close_active_session()
+  local current_config = config.get()
 
   local session = setmetatable({
     kind = target.kind,
@@ -50,9 +73,12 @@ local function create_session(target, interpreter_info, context)
       ordered = {},
       seen = {},
     }),
+    editor_buffer_name = util.synthetic_editor_path(target.source_bufnr),
     interpreter_path = interpreter_info.interpreter_path,
     interpreter_mode = interpreter_info.mode,
     interpreter_provenance = interpreter_info.provenance,
+    keymaps = vim.deepcopy(current_config.session_keymaps),
+    lsp_config = vim.deepcopy(current_config.lsp),
     closed = false,
   }, Session)
 
@@ -72,16 +98,17 @@ local function create_session(target, interpreter_info, context)
   ui.set_imports_lines(session.view, shared_imports.render_lines(session.shared_imports))
   ui.set_editor_lines(session.view, target.editor_lines or {})
   ui.set_output_lines(session.view, {})
-  ui.set_hints(session.view, config.get().session_keymaps)
+  ui.set_hints(session.view, session.keymaps)
   session.lsp_state = lsp.attach_from_source({
     source_bufnr = session.source_bufnr,
     editor_bufnr = session.editor_bufnr,
-    enabled = config.get().lsp.enabled,
+    enabled = session.lsp_config.enabled,
+    signature_help_config = session.lsp_config.signature_help,
   })
   session:_set_keymaps()
   ui.focus_editor(session.view)
 
-  if config.get().lsp.warn_unsupported then
+  if session.lsp_config.warn_unsupported then
     if session.lsp_state.status == "unsupported" or session.lsp_state.status == "attach_failed" then
       util.notify(session.lsp_state.message, vim.log.levels.WARN)
     end
@@ -112,8 +139,8 @@ local function open_with_request(request)
       return
     end
 
-    local _, err = create_session(request.target, result, request.context)
-    if err then
+    local ok, err = pcall(create_session, request.target, result, request.context)
+    if not ok then
       util.notify(err, vim.log.levels.ERROR)
       return
     end
@@ -155,77 +182,13 @@ function Session:_map(bufnr, mode, lhs, rhs, desc)
 end
 
 function Session:_set_keymaps()
-  local keymaps = config.get().session_keymaps
-
-  self:_map(self.editor_bufnr, "n", keymaps.run_all, function()
-    self:run_all()
-  end, "Run all example code")
+  local keymaps = self.keymaps
 
   self:_map(self.editor_bufnr, "x", keymaps.run_selection, ":DoxiRunSelection<CR>", "Run selected example code")
-
-  self:_map(self.editor_bufnr, "n", keymaps.restart, function()
-    self:restart()
-  end, "Restart Python session")
-
-  self:_map(self.editor_bufnr, "n", keymaps.restart_rerun, function()
-    self:restart_and_rerun()
-  end, "Restart and rerun example code")
-
-  self:_map(self.editor_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.editor_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
-
-  self:_map(self.output_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.output_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
-
-  self:_map(self.imports_bufnr, "n", keymaps.run_all, function()
-    self:run_all()
-  end, "Run all example code")
-
-  self:_map(self.imports_bufnr, "n", keymaps.restart, function()
-    self:restart()
-  end, "Restart Python session")
-
-  self:_map(self.imports_bufnr, "n", keymaps.restart_rerun, function()
-    self:restart_and_rerun()
-  end, "Restart and rerun example code")
-
-  self:_map(self.imports_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.imports_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
-
-  self:_map(self.hints_bufnr, "n", keymaps.run_all, function()
-    self:run_all()
-  end, "Run all example code")
-
-  self:_map(self.hints_bufnr, "n", keymaps.restart, function()
-    self:restart()
-  end, "Restart Python session")
-
-  self:_map(self.hints_bufnr, "n", keymaps.restart_rerun, function()
-    self:restart_and_rerun()
-  end, "Restart and rerun example code")
-
-  self:_map(self.hints_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.hints_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
+  bind_common_keymaps(self, self.editor_bufnr, keymaps)
+  bind_common_keymaps(self, self.output_bufnr, keymaps)
+  bind_common_keymaps(self, self.imports_bufnr, keymaps)
+  bind_common_keymaps(self, self.hints_bufnr, keymaps)
 end
 
 function Session:set_transcript(lines)

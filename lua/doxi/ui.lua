@@ -44,8 +44,9 @@ function M.resolve_size(value, available, minimum)
 end
 
 function M.open(session)
-  local ui_config = config.get().ui
-  local hints = M.build_hints(config.get().session_keymaps)
+  local current_config = config.get()
+  local ui_config = current_config.ui
+  local hints = M.build_hints(current_config.session_keymaps)
   local imports_lines = shared_imports.render_lines(session.shared_imports)
   local available_width = math.max(80, vim.o.columns - 4)
   local total_width = M.resolve_size(ui_config.width, available_width, 80)
@@ -68,6 +69,10 @@ function M.open(session)
   set_buffer_defaults(editor_bufnr)
   set_buffer_defaults(output_bufnr)
   set_buffer_defaults(hints_bufnr)
+
+  if type(session.editor_buffer_name) == "string" and session.editor_buffer_name ~= "" then
+    vim.api.nvim_buf_set_name(editor_bufnr, session.editor_buffer_name)
+  end
 
   vim.api.nvim_set_option_value("filetype", "text", { buf = imports_bufnr })
   vim.api.nvim_set_option_value("modifiable", false, { buf = imports_bufnr })

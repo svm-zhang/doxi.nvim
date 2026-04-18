@@ -125,7 +125,7 @@ return {
       t.assert_equal(result.mode, "aligned_lsp")
       t.assert_equal(result.interpreter_path, python)
       t.assert_equal(result.provenance, "venv_selector")
-      t.assert_equal(result.items[1].label, "Source buffer LSP (venv-selector)")
+      t.assert_equal(result.items[1].label, "LSP venv")
     end,
   },
   {

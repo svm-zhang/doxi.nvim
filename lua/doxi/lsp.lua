@@ -1,4 +1,7 @@
 local M = {}
+local signature_help_states = {}
+local signature_help_namespace = vim.api.nvim_create_namespace("doxi.signature_help")
+local noice_signature_patch = nil
 
 local supported_client_names = {
   basedpyright = true,
@@ -125,6 +128,410 @@ function M._merge_features(left, right)
   }
 end
 
+local function resolve_signature_help_config(config)
+  local normalized = vim.deepcopy(config or {})
+  local provider = normalized.provider
+
+  if provider ~= "doxi" then
+    provider = "ambient"
+  end
+
+  return vim.tbl_deep_extend("force", {
+    provider = "ambient",
+    relative = "cursor",
+    anchor_bias = "below",
+    offset_y = 1,
+    width = nil,
+    height = nil,
+    focus = false,
+    focusable = false,
+    mouse = true,
+  }, normalized, {
+    provider = provider,
+  })
+end
+
+local function positive_integer(value)
+  if type(value) ~= "number" or value <= 0 then
+    return nil
+  end
+
+  return math.floor(value)
+end
+
+local function signature_help_state(bufnr)
+  return signature_help_states[bufnr]
+end
+
+function M._signature_help_state(bufnr)
+  local state = signature_help_state(bufnr)
+  if not state then
+    return nil
+  end
+
+  return {
+    attached_client_ids = vim.deepcopy(state.attached_client_ids or {}),
+    config = vim.deepcopy(state.config or {}),
+    float_bufnr = state.float_bufnr,
+    float_winid = state.float_winid,
+    group = state.group,
+  }
+end
+
+function M._signature_help_config(bufnr)
+  local state = signature_help_state(bufnr)
+  if not state then
+    return nil
+  end
+
+  return vim.deepcopy(state.config)
+end
+
+function M._close_signature_help(bufnr)
+  local state = signature_help_state(bufnr)
+  if not state then
+    return
+  end
+
+  if state.float_winid and vim.api.nvim_win_is_valid(state.float_winid) then
+    pcall(vim.api.nvim_win_close, state.float_winid, true)
+  end
+
+  state.float_bufnr = nil
+  state.float_winid = nil
+end
+
+function M._apply_signature_help_window_config(winid, config)
+  if not winid or not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+
+  local updates = {}
+  local width = positive_integer(config and config.width)
+  local height = positive_integer(config and config.height)
+
+  if width then
+    updates.width = width
+  end
+
+  if height then
+    updates.height = height
+  end
+
+  if config and config.focusable ~= nil then
+    updates.focusable = config.focusable
+  end
+
+  if config and config.mouse ~= nil then
+    updates.mouse = config.mouse
+  end
+
+  if next(updates) == nil then
+    return
+  end
+
+  pcall(vim.api.nvim_win_set_config, winid, updates)
+end
+
+local function uses_doxi_signature_help(bufnr)
+  local state = bufnr and signature_help_state(bufnr) or nil
+  return state and state.config and state.config.provider == "doxi"
+end
+
+function M._signature_help_provider(config)
+  return resolve_signature_help_config(config).provider
+end
+
+function M._suppress_ambient_signature_help()
+  if noice_signature_patch then
+    return true
+  end
+
+  local ok, noice_signature = pcall(require, "noice.lsp.signature")
+  if not ok or type(noice_signature) ~= "table" then
+    return false
+  end
+
+  if type(noice_signature.check) ~= "function" or type(noice_signature.on_signature) ~= "function" then
+    return false
+  end
+
+  noice_signature_patch = {
+    module = noice_signature,
+    check = noice_signature.check,
+    on_signature = noice_signature.on_signature,
+  }
+
+  noice_signature.check = function(...)
+    if uses_doxi_signature_help(vim.api.nvim_get_current_buf()) then
+      return
+    end
+
+    return noice_signature_patch.check(...)
+  end
+
+  noice_signature.on_signature = function(err, result, ctx, config)
+    local bufnr = ctx and ctx.bufnr or vim.api.nvim_get_current_buf()
+    if uses_doxi_signature_help(bufnr) then
+      return
+    end
+
+    return noice_signature_patch.on_signature(err, result, ctx, config)
+  end
+
+  return true
+end
+
+function M._restore_ambient_signature_help()
+  if not noice_signature_patch then
+    return
+  end
+
+  noice_signature_patch.module.check = noice_signature_patch.check
+  noice_signature_patch.module.on_signature = noice_signature_patch.on_signature
+  noice_signature_patch = nil
+end
+
+function M._signature_help_params(bufnr, make_position_params)
+  local winid = vim.fn.bufwinid(bufnr)
+  if winid == -1 then
+    return nil
+  end
+
+  local build_position = make_position_params or vim.lsp.util.make_position_params
+  return function(client)
+    return build_position(winid, client.offset_encoding)
+  end
+end
+
+function M._select_signature_help_response(results, client_ids, get_client_by_id)
+  local get_client = get_client_by_id or vim.lsp.get_client_by_id
+
+  for _, client_id in ipairs(client_ids or {}) do
+    local response = results and results[client_id] or nil
+    local result = response and response.result or nil
+    if result and result.signatures and result.signatures[1] then
+      return get_client(client_id), result
+    end
+  end
+
+  return nil, nil
+end
+
+local function normalize_preview_size(opts)
+  opts.width = positive_integer(opts.width)
+  opts.height = positive_integer(opts.height)
+end
+
+local function apply_signature_help_highlight(preview_bufnr, highlight_range)
+  if
+    not highlight_range
+    or not preview_bufnr
+    or not vim.api.nvim_buf_is_valid(preview_bufnr)
+    or not vim.hl
+    or type(vim.hl.range) ~= "function"
+  then
+    return
+  end
+
+  vim.api.nvim_buf_clear_namespace(preview_bufnr, signature_help_namespace, 0, -1)
+  vim.hl.range(
+    preview_bufnr,
+    signature_help_namespace,
+    "LspSignatureActiveParameter",
+    { highlight_range[1], highlight_range[2] },
+    { highlight_range[3], highlight_range[4] }
+  )
+end
+
+local function build_preview_options(bufnr, config, client_name)
+  local opts = vim.tbl_deep_extend("force", {}, config)
+  opts.provider = nil
+  opts.focus_id = opts.focus_id or ("doxi.signature_help.%d"):format(bufnr)
+  opts.title = opts.border and ("Signature Help: %s"):format(client_name) or nil
+
+  if vim.fn.has("nvim-0.11") == 0 then
+    opts.anchor_bias = nil
+  end
+
+  normalize_preview_size(opts)
+
+  return opts
+end
+
+local function open_signature_preview(bufnr, state, client, lines, open_floating_preview)
+  local preview_opts = build_preview_options(bufnr, state.config, client.name)
+
+  if state.float_winid and vim.api.nvim_win_is_valid(state.float_winid) then
+    M._close_signature_help(bufnr)
+  end
+
+  local preview_bufnr, preview_winid = open_floating_preview(lines, "markdown", preview_opts)
+  state.float_bufnr = preview_bufnr
+  state.float_winid = preview_winid
+  M._apply_signature_help_window_config(preview_winid, state.config)
+
+  return preview_bufnr, preview_winid, preview_opts
+end
+
+function M.show_signature_help(bufnr, opts)
+  local state = signature_help_state(bufnr)
+  if not state or state.config.provider ~= "doxi" then
+    return false
+  end
+
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    M._unregister_signature_help(bufnr)
+    return false
+  end
+
+  local params = (opts and opts.params) or M._signature_help_params(bufnr, opts and opts.make_position_params)
+  if not params then
+    M._close_signature_help(bufnr)
+    return false
+  end
+
+  state.request_seq = (state.request_seq or 0) + 1
+  local request_seq = state.request_seq
+  local request = (opts and opts.buf_request_all) or vim.lsp.buf_request_all
+  local get_client_by_id = (opts and opts.get_client_by_id) or vim.lsp.get_client_by_id
+  local convert_signature_help = (opts and opts.convert_signature_help_to_markdown_lines)
+    or vim.lsp.util.convert_signature_help_to_markdown_lines
+  local open_floating_preview = (opts and opts.open_floating_preview) or vim.lsp.util.open_floating_preview
+
+  request(bufnr, "textDocument/signatureHelp", params, function(results, ctx)
+    local current = signature_help_state(bufnr)
+    if not current or current ~= state or current.request_seq ~= request_seq then
+      return
+    end
+
+    if ctx and ctx.bufnr and ctx.bufnr ~= bufnr then
+      return
+    end
+
+    local client, result = M._select_signature_help_response(results, current.attached_client_ids, get_client_by_id)
+    if not client or not result then
+      M._close_signature_help(bufnr)
+      return
+    end
+
+    local triggers = vim.tbl_get(client.server_capabilities, "signatureHelpProvider", "triggerCharacters")
+    local lines, highlight_range = convert_signature_help(result, vim.bo[bufnr].filetype, triggers)
+    if not lines or vim.tbl_isempty(lines) then
+      M._close_signature_help(bufnr)
+      return
+    end
+
+    local preview_bufnr = open_signature_preview(
+      bufnr,
+      current,
+      client,
+      lines,
+      open_floating_preview
+    )
+    apply_signature_help_highlight(preview_bufnr, highlight_range)
+  end)
+
+  return true
+end
+
+function M._schedule_signature_help(bufnr)
+  local state = signature_help_state(bufnr)
+  if not state or state.scheduled then
+    return
+  end
+
+  state.scheduled = true
+
+  vim.schedule(function()
+    local current = signature_help_state(bufnr)
+    if not current or current ~= state then
+      return
+    end
+
+    current.scheduled = false
+    M.show_signature_help(bufnr)
+  end)
+end
+
+function M._register_signature_help(bufnr, opts)
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  M._unregister_signature_help(bufnr)
+
+  local config = resolve_signature_help_config(opts and opts.config or opts)
+  if config.provider ~= "doxi" then
+    return
+  end
+
+  M._suppress_ambient_signature_help()
+
+  local state = {
+    attached_client_ids = vim.deepcopy(opts and opts.attached_client_ids or {}),
+    config = config,
+    float_bufnr = nil,
+    float_winid = nil,
+    request_seq = 0,
+    scheduled = false,
+  }
+
+  state.group = vim.api.nvim_create_augroup(("doxi.signature_help.%d"):format(bufnr), { clear = true })
+  signature_help_states[bufnr] = state
+
+  vim.api.nvim_create_autocmd({
+    "TextChangedI",
+    "TextChangedP",
+    "CursorMovedI",
+  }, {
+    group = state.group,
+    buffer = bufnr,
+    callback = function()
+      M._schedule_signature_help(bufnr)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({
+    "InsertLeave",
+    "BufLeave",
+    "WinLeave",
+  }, {
+    group = state.group,
+    buffer = bufnr,
+    callback = function()
+      M._close_signature_help(bufnr)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = state.group,
+    buffer = bufnr,
+    callback = function()
+      M._unregister_signature_help(bufnr)
+    end,
+  })
+end
+
+function M._unregister_signature_help(bufnr)
+  local state = signature_help_state(bufnr)
+  if not state then
+    return
+  end
+
+  M._close_signature_help(bufnr)
+
+  if state.group then
+    pcall(vim.api.nvim_del_augroup_by_id, state.group)
+  end
+
+  signature_help_states[bufnr] = nil
+
+  if next(signature_help_states) == nil then
+    M._restore_ambient_signature_help()
+  end
+end
+
 function M._set_editor_buffer_features(bufnr, features)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
@@ -232,6 +639,12 @@ function M.attach_from_source(opts)
   end
 
   M._set_editor_buffer_features(editor_bufnr, features)
+  if features.signature_help then
+    M._register_signature_help(editor_bufnr, {
+      attached_client_ids = attached_client_ids,
+      config = opts.signature_help_config,
+    })
+  end
 
   return {
     status = "attached",
@@ -248,6 +661,8 @@ function M.detach(state, detach_client)
   if not state or not state.editor_bufnr or not state.attached_client_ids then
     return
   end
+
+  M._unregister_signature_help(state.editor_bufnr)
 
   if not vim.api.nvim_buf_is_valid(state.editor_bufnr) then
     return

@@ -11,7 +11,7 @@ local aligned_labels = {
   client_settings = "Source buffer LSP",
   cmd_env = "Source buffer LSP",
   env_var = "Source buffer LSP (environment)",
-  venv_selector = "Source buffer LSP (venv-selector)",
+  venv_selector = "LSP venv",
 }
 
 local function is_executable(path)
@@ -124,6 +124,22 @@ local function recover_from_env_vars(env_vars, executable_check)
   return python_from_env_root(vars.VIRTUAL_ENV or vars.CONDA_PREFIX, executable_check)
 end
 
+local function aligned_result(interpreter_path, provenance)
+  return {
+    mode = "aligned_lsp",
+    interpreter_path = interpreter_path,
+    provenance = provenance,
+    items = {
+      {
+        path = interpreter_path,
+        label = aligned_labels[provenance] or "Source buffer LSP",
+      },
+    },
+    allow_manual = false,
+    warning = nil,
+  }
+end
+
 local function fallback_result(bufnr, discover, warning)
   return {
     mode = "fallback",
@@ -135,57 +151,67 @@ local function fallback_result(bufnr, discover, warning)
   }
 end
 
+local function recovery_providers(opts)
+  return {
+    function()
+      local recovered = recover_from_clients(opts.source_client_state.supported_clients, opts.executable_check)
+      if not recovered then
+        return nil
+      end
+
+      return recovered.interpreter_path, recovered.provenance
+    end,
+    function()
+      local path = opts.venv_selector_python(opts.executable_check)
+      if not path then
+        return nil
+      end
+
+      return path, "venv_selector"
+    end,
+    function()
+      local path = recover_from_env_vars(opts.env_vars, opts.executable_check)
+      if not path then
+        return nil
+      end
+
+      return path, "env_var"
+    end,
+  }
+end
+
+local function resolve_aligned_interpreter(opts)
+  for _, provider in ipairs(recovery_providers(opts)) do
+    local path, provenance = provider()
+    if path then
+      return aligned_result(path, provenance)
+    end
+  end
+
+  return nil
+end
+
 function M.resolve(bufnr, opts)
   opts = opts or {}
 
-  local source_client_state = (opts.get_source_client_state or lsp.source_client_state)(bufnr)
-  local executable_check = opts.is_executable or is_executable
-  local discover = opts.discover or env.discover
-  local venv_selector_python = opts.venv_selector_python or M._venv_selector_python
-  local env_vars = opts.env_vars or vim.env
+  local resolver_opts = {
+    source_client_state = (opts.get_source_client_state or lsp.source_client_state)(bufnr),
+    executable_check = opts.is_executable or is_executable,
+    discover = opts.discover or env.discover,
+    venv_selector_python = opts.venv_selector_python or M._venv_selector_python,
+    env_vars = opts.env_vars or vim.env,
+  }
 
-  if #source_client_state.supported_clients == 0 then
-    return fallback_result(bufnr, discover, nil)
+  if #resolver_opts.source_client_state.supported_clients == 0 then
+    return fallback_result(bufnr, resolver_opts.discover, nil)
   end
 
-  local recovered = recover_from_clients(source_client_state.supported_clients, executable_check)
-  if not recovered then
-    local venv_selector_path = venv_selector_python(executable_check)
-    if venv_selector_path then
-      recovered = {
-        interpreter_path = venv_selector_path,
-        provenance = "venv_selector",
-      }
-    end
+  local aligned = resolve_aligned_interpreter(resolver_opts)
+  if aligned then
+    return aligned
   end
 
-  if not recovered then
-    local env_var_path = recover_from_env_vars(env_vars, executable_check)
-    if env_var_path then
-      recovered = {
-        interpreter_path = env_var_path,
-        provenance = "env_var",
-      }
-    end
-  end
-
-  if recovered then
-    return {
-      mode = "aligned_lsp",
-      interpreter_path = recovered.interpreter_path,
-      provenance = recovered.provenance,
-      items = {
-        {
-          path = recovered.interpreter_path,
-          label = aligned_labels[recovered.provenance] or "Source buffer LSP",
-        },
-      },
-      allow_manual = false,
-      warning = nil,
-    }
-  end
-
-  return fallback_result(bufnr, discover, fallback_warning)
+  return fallback_result(bufnr, resolver_opts.discover, fallback_warning)
 end
 
 function M.pick_for_open(opts, callback)

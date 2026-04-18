@@ -99,6 +99,7 @@ return {
             local detached_state
 
             vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_buf_set_name(source_bufnr, "/project/example.py")
             vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
             vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
               "def f():",
@@ -139,6 +140,9 @@ return {
 
                   t.assert_equal(attach_opts.source_bufnr, source_bufnr)
                   t.assert_equal(attach_opts.editor_bufnr, active.editor_bufnr)
+                  t.assert_equal(attach_opts.signature_help_config.provider, "ambient")
+                  t.assert_equal(vim.api.nvim_get_option_value("buftype", { buf = active.editor_bufnr }), "nofile")
+                  t.assert_equal(vim.api.nvim_buf_get_name(active.editor_bufnr):match("^/project/%.doxi%-session%-.+%.py$") ~= nil, true)
 
                   session.cancel()
 
