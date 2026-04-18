@@ -41,10 +41,6 @@ function M.setup()
     require("doxi.session").restart_and_rerun()
   end, {})
 
-  vim.api.nvim_create_user_command("DoxiEnvSwitch", function()
-    require("doxi.session").env_switch()
-  end, {})
-
   vim.api.nvim_create_user_command("DoxiApply", function()
     require("doxi.session").apply()
   end, {})

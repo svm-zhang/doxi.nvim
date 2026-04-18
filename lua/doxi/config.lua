@@ -2,7 +2,6 @@ local M = {}
 
 local defaults = {
   python_path = nil,
-  clear_transcript_on_env_switch = true,
   lsp = {
     enabled = true,
     warn_unsupported = true,
@@ -20,7 +19,6 @@ local defaults = {
     run_selection = "<leader>rs",
     restart = "<leader>rr",
     restart_rerun = "<leader>rR",
-    env_switch = "<leader>re",
     apply = "<leader>da",
     cancel = "q",
   },
