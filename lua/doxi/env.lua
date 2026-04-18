@@ -126,17 +126,20 @@ function M.resolve_default(bufnr)
   return candidates[1].path, candidates
 end
 
-function M.pick_interpreter(opts, callback)
-  local candidates = M.discover(opts.bufnr)
-  local items = vim.deepcopy(candidates)
+function M.pick_candidates(opts, callback)
+  local items = vim.deepcopy(opts.items or {})
+  local allow_manual = opts.allow_manual ~= false
 
-  table.insert(items, {
-    label = "Enter path manually...",
-    path = nil,
-  })
+  if allow_manual then
+    table.insert(items, {
+      label = "Enter path manually...",
+      path = nil,
+      manual = true,
+    })
+  end
 
   vim.ui.select(items, {
-    prompt = "Select Python environment",
+    prompt = opts.prompt or "Select Python environment",
     format_item = function(item)
       if item.path then
         return ("%s [%s]"):format(item.label, item.path)
@@ -146,12 +149,12 @@ function M.pick_interpreter(opts, callback)
     end,
   }, function(choice)
     if not choice then
-      callback(nil)
+      callback(nil, nil)
       return
     end
 
     if choice.path then
-      callback(choice.path)
+      callback(choice.path, choice)
       return
     end
 
@@ -161,35 +164,53 @@ function M.pick_interpreter(opts, callback)
         default = opts.current or "",
       }, function(input)
         if not input or input == "" then
-          callback(nil)
+          callback(nil, nil)
           return
         end
 
         if vim.fn.executable(input) ~= 1 then
           util.notify(("Interpreter is not executable: %s"):format(input), vim.log.levels.ERROR)
-          callback(nil)
+          callback(nil, nil)
           return
         end
 
-        callback(input)
+        callback(input, {
+          label = "Manual path",
+          path = input,
+          manual = true,
+        })
       end)
       return
     end
 
     local input = vim.fn.input("Python interpreter path: ", opts.current or "")
     if input == "" then
-      callback(nil)
+      callback(nil, nil)
       return
     end
 
     if vim.fn.executable(input) ~= 1 then
       util.notify(("Interpreter is not executable: %s"):format(input), vim.log.levels.ERROR)
-      callback(nil)
+      callback(nil, nil)
       return
     end
 
-    callback(input)
+    callback(input, {
+      label = "Manual path",
+      path = input,
+      manual = true,
+    })
   end)
+end
+
+function M.pick_interpreter(opts, callback)
+  M.pick_candidates({
+    bufnr = opts.bufnr,
+    current = opts.current,
+    items = M.discover(opts.bufnr),
+    allow_manual = true,
+    prompt = "Select Python environment",
+  }, callback)
 end
 
 return M

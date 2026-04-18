@@ -1,7 +1,7 @@
 local backend = require("doxi.backend")
 local config = require("doxi.config")
-local env = require("doxi.env")
 local examples_context = require("doxi.examples_context")
+local interpreter = require("doxi.interpreter")
 local inserter = require("doxi.inserter")
 local lsp = require("doxi.lsp")
 local selection = require("doxi.selection")
@@ -33,7 +33,7 @@ local function close_active_session()
   end
 end
 
-local function create_session(target, interpreter_path, context)
+local function create_session(target, interpreter_info, context)
   close_active_session()
 
   local session = setmetatable({
@@ -50,12 +50,14 @@ local function create_session(target, interpreter_path, context)
       ordered = {},
       seen = {},
     }),
-    interpreter_path = interpreter_path,
+    interpreter_path = interpreter_info.interpreter_path,
+    interpreter_mode = interpreter_info.mode,
+    interpreter_provenance = interpreter_info.provenance,
     closed = false,
   }, Session)
 
   session.backend = backend.new({
-    interpreter_path = interpreter_path,
+    interpreter_path = interpreter_info.interpreter_path,
   })
   session.view = ui.open(session)
   session.imports_bufnr = session.view.imports_bufnr
@@ -103,16 +105,21 @@ local function create_target(line1, line2)
 end
 
 local function open_with_request(request)
-  env.pick_interpreter({
+  interpreter.pick_for_open({
     bufnr = request.target.source_bufnr,
-  }, function(path)
-    if not path then
+  }, function(result)
+    if not result or not result.interpreter_path then
       return
     end
 
-    local _, err = create_session(request.target, path, request.context)
+    local _, err = create_session(request.target, result, request.context)
     if err then
       util.notify(err, vim.log.levels.ERROR)
+      return
+    end
+
+    if result.warning then
+      util.notify(result.warning, vim.log.levels.WARN)
     end
   end)
 end
@@ -164,10 +171,6 @@ function Session:_set_keymaps()
     self:restart_and_rerun()
   end, "Restart and rerun example code")
 
-  self:_map(self.editor_bufnr, "n", keymaps.env_switch, function()
-    self:env_switch()
-  end, "Switch Python environment")
-
   self:_map(self.editor_bufnr, "n", keymaps.apply, function()
     self:apply()
   end, "Apply transcript")
@@ -196,10 +199,6 @@ function Session:_set_keymaps()
     self:restart_and_rerun()
   end, "Restart and rerun example code")
 
-  self:_map(self.imports_bufnr, "n", keymaps.env_switch, function()
-    self:env_switch()
-  end, "Switch Python environment")
-
   self:_map(self.imports_bufnr, "n", keymaps.apply, function()
     self:apply()
   end, "Apply transcript")
@@ -219,10 +218,6 @@ function Session:_set_keymaps()
   self:_map(self.hints_bufnr, "n", keymaps.restart_rerun, function()
     self:restart_and_rerun()
   end, "Restart and rerun example code")
-
-  self:_map(self.hints_bufnr, "n", keymaps.env_switch, function()
-    self:env_switch()
-  end, "Switch Python environment")
 
   self:_map(self.hints_bufnr, "n", keymaps.apply, function()
     self:apply()
@@ -371,36 +366,6 @@ function Session:restart_and_rerun()
   end)
 end
 
-function Session:env_switch()
-  env.pick_interpreter({
-    bufnr = self.source_bufnr,
-    current = self.interpreter_path,
-  }, function(path)
-    if self.closed or not path or path == self.interpreter_path then
-      return
-    end
-
-    self.interpreter_path = path
-    self.backend:set_interpreter(path)
-    self.backend:restart(function(_, err)
-      if self.closed then
-        return
-      end
-
-      if err then
-        util.notify(err, vim.log.levels.ERROR)
-        return
-      end
-
-      if config.get().clear_transcript_on_env_switch then
-        self:set_transcript({})
-      end
-
-      util.notify(("Switched environment to %s"):format(path))
-    end)
-  end)
-end
-
 function Session:apply()
   local ok, err = inserter.replace({
     bufnr = self.source_bufnr,
@@ -545,14 +510,6 @@ end
 function M.restart_and_rerun()
   if active_session then
     active_session:restart_and_rerun()
-  else
-    util.notify("No active doxi session.", vim.log.levels.WARN)
-  end
-end
-
-function M.env_switch()
-  if active_session then
-    active_session:env_switch()
   else
     util.notify("No active doxi session.", vim.log.levels.WARN)
   end
