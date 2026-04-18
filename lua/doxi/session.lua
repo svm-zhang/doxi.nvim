@@ -3,6 +3,7 @@ local config = require("doxi.config")
 local env = require("doxi.env")
 local examples_context = require("doxi.examples_context")
 local inserter = require("doxi.inserter")
+local lsp = require("doxi.lsp")
 local selection = require("doxi.selection")
 local shared_imports = require("doxi.shared_imports")
 local transcript = require("doxi.transcript")
@@ -70,8 +71,19 @@ local function create_session(target, interpreter_path, context)
   ui.set_editor_lines(session.view, target.editor_lines or {})
   ui.set_output_lines(session.view, {})
   ui.set_hints(session.view, config.get().session_keymaps)
+  session.lsp_state = lsp.attach_from_source({
+    source_bufnr = session.source_bufnr,
+    editor_bufnr = session.editor_bufnr,
+    enabled = config.get().lsp.enabled,
+  })
   session:_set_keymaps()
   ui.focus_editor(session.view)
+
+  if config.get().lsp.warn_unsupported then
+    if session.lsp_state.status == "unsupported" or session.lsp_state.status == "attach_failed" then
+      util.notify(session.lsp_state.message, vim.log.levels.WARN)
+    end
+  end
 
   active_session = session
   return session
@@ -415,6 +427,10 @@ function Session:close()
 
   self.closed = true
 
+  if self.lsp_state then
+    lsp.detach(self.lsp_state)
+  end
+
   if self.backend then
     self.backend:stop()
   end
@@ -432,6 +448,7 @@ function Session:close()
   self.editor_bufnr = nil
   self.output_bufnr = nil
   self.hints_bufnr = nil
+  self.lsp_state = nil
   self.transcript_lines = {}
 end
 

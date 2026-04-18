@@ -3,6 +3,10 @@ local M = {}
 local defaults = {
   python_path = nil,
   clear_transcript_on_env_switch = true,
+  lsp = {
+    enabled = true,
+    warn_unsupported = true,
+  },
   ui = {
     width = 100,
     height = 0.75,
