@@ -13,7 +13,7 @@ It is built for one narrow workflow: select a docstring example region, open a f
 - Render deterministic doctest transcripts with `>>>` and `...` prompts.
 - Keep a persistent Python subprocess alive for the session lifetime.
 - Restart the interpreter cleanly or restart and rerun everything.
-- Reuse supported source-buffer Python LSP clients inside the editor pane.
+- Reuse supported source-buffer Python LSP clients inside the editor pane (`pyright`, `basedpyright`, `pylsp`, `ruff`).
 - Prefer the source-buffer interpreter when it can be recovered, and fall back safely when it cannot.
 - Apply the transcript back to the original selected source range safely.
 
@@ -76,6 +76,9 @@ require("doxi").setup({
   lsp = {
     enabled = true,
     warn_unsupported = true,
+    signature_help = {
+      provider = "ambient",
+    },
   },
   ui = {
     width = 100,
@@ -98,12 +101,16 @@ require("doxi").setup({
 
 Configuration notes:
 
-- `python_path` takes priority over automatic interpreter discovery
-- `lsp.enabled = true` enables editor-pane reuse of supported source-buffer Python LSP clients
-- `lsp.warn_unsupported = true` warns when attached source-buffer clients are unsupported or when interpreter fallback breaks alignment
-- `ui.width` accepts either a fixed number of columns such as `100` or a ratio such as `0.75`
-- `ui.imports_height` sets the minimum height of the read-only shared-imports pane
-- `session_keymaps` only affect the floating session buffers, not your source buffer
+| Option | Default / choices | Meaning |
+| --- | --- | --- |
+| `python_path` | `nil` or explicit Python path | Takes priority over automatic interpreter discovery. |
+| `lsp.enabled` | `true` | Enables editor-pane reuse of supported source-buffer Python LSP clients: `pyright`, `basedpyright`, `pylsp`, and `ruff`. |
+| `lsp.warn_unsupported` | `true` | Warns when attached source-buffer clients are unsupported or when interpreter fallback breaks alignment. |
+| `lsp.signature_help.provider` | `"ambient"` or `"doxi"` | `"ambient"` keeps your editor's existing signature-help behavior. `"doxi"` makes `doxi` request and render signature help inside the `doxi` editor pane. |
+| `lsp.signature_help.*` | floating-window options such as `width`, `height`, `focusable`, `mouse` | Matter only when `lsp.signature_help.provider = "doxi"`. The `doxi` path is scoped to the editor pane and may suppress known conflicting signature-help providers there when needed, but it does not promise universal suppression of arbitrary third-party plugins. |
+| `ui.width` | fixed columns like `100` or ratio like `0.75` | Controls session width. |
+| `ui.imports_height` | integer | Sets the minimum height of the read-only shared-imports pane. |
+| `session_keymaps` | mapping table | Only affect the floating session buffers, not your source buffer. |
 
 Suggested source-buffer keybind:
 
@@ -253,6 +260,10 @@ currently checks, in priority order:
 6. `python3`.
 7. `python`.
 8. Manual path entry.
+
+When fallback discovery finds multiple candidates, `doxi` suppresses repeated
+entries for the same environment while still showing genuinely different
+interpreters from different sources.
 
 If `doxi` must fall back while a supported source-buffer LSP is attached, it
 warns that editor assistance and code execution may not match.
