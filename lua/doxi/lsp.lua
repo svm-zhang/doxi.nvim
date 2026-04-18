@@ -7,6 +7,13 @@ local supported_client_names = {
   ruff = true,
 }
 
+local supported_client_order = {
+  basedpyright = 1,
+  pyright = 2,
+  pylsp = 3,
+  ruff = 4,
+}
+
 local function sorted_names(names)
   local items = vim.deepcopy(names or {})
   table.sort(items)
@@ -33,6 +40,23 @@ function M._is_supported_client(client)
   return client and supported_client_names[client.name] == true
 end
 
+local function sort_clients(clients)
+  local items = vim.deepcopy(clients or {})
+
+  table.sort(items, function(left, right)
+    local left_rank = supported_client_order[left.name] or 100
+    local right_rank = supported_client_order[right.name] or 100
+
+    if left_rank == right_rank then
+      return (left.name or "") < (right.name or "")
+    end
+
+    return left_rank < right_rank
+  end)
+
+  return items
+end
+
 function M._get_clients(bufnr)
   if not vim.lsp or type(vim.lsp.get_clients) ~= "function" then
     return {}
@@ -56,6 +80,23 @@ function M._split_supported_clients(clients)
   end
 
   return supported, unsupported
+end
+
+function M.source_client_state(bufnr)
+  local source_clients = M._get_clients(bufnr)
+  local supported_clients, unsupported_clients = M._split_supported_clients(source_clients)
+
+  supported_clients = sort_clients(supported_clients)
+  unsupported_clients = sort_clients(unsupported_clients)
+
+  return {
+    source_clients = sort_clients(source_clients),
+    supported_clients = supported_clients,
+    unsupported_clients = unsupported_clients,
+    source_client_names = list_names(source_clients),
+    supported_client_names = list_names(supported_clients),
+    unsupported_client_names = list_names(unsupported_clients),
+  }
 end
 
 function M._client_features(client, bufnr)

@@ -11,7 +11,6 @@ local hint_entries = {
   { key = "apply", label = "Apply", leader = true },
   { key = "restart", label = "Restart", leader = true },
   { key = "restart_rerun", label = "Fresh rerun", leader = true },
-  { key = "env_switch", label = "Env", leader = true },
   { key = "cancel", label = "Cancel", leader = false },
 }
 
@@ -24,7 +23,7 @@ end
 local function set_window_defaults(winid, opts)
   vim.api.nvim_set_option_value("number", false, { win = winid })
   vim.api.nvim_set_option_value("relativenumber", false, { win = winid })
-  vim.api.nvim_set_option_value("signcolumn", "no", { win = winid })
+  vim.api.nvim_set_option_value("signcolumn", opts.signcolumn or "no", { win = winid })
   vim.api.nvim_set_option_value("wrap", false, { win = winid })
   vim.api.nvim_set_option_value("cursorline", opts.cursorline or false, { win = winid })
 end
@@ -93,6 +92,7 @@ function M.open(session)
     height = imports_height,
     border = ui_config.border,
     style = "minimal",
+    zindex = 40,
     title = " shared imports ",
     title_pos = "center",
   })
@@ -105,6 +105,7 @@ function M.open(session)
     height = editor_height,
     border = ui_config.border,
     style = "minimal",
+    zindex = 40,
     title = (" doxi %s "):format(session.workflow),
     title_pos = "center",
   })
@@ -117,6 +118,7 @@ function M.open(session)
     height = output_height,
     border = ui_config.border,
     style = "minimal",
+    zindex = 40,
     title = " doctest transcript ",
     title_pos = "center",
   })
@@ -129,14 +131,15 @@ function M.open(session)
     height = hints_height,
     border = ui_config.border,
     style = "minimal",
+    zindex = 40,
     title = " key hints ",
     title_pos = "center",
   })
 
-  set_window_defaults(imports_winid, { cursorline = false })
-  set_window_defaults(editor_winid, { cursorline = true })
-  set_window_defaults(output_winid, { cursorline = false })
-  set_window_defaults(hints_winid, { cursorline = false })
+  set_window_defaults(imports_winid, { cursorline = false, signcolumn = "no" })
+  set_window_defaults(editor_winid, { cursorline = true, signcolumn = "yes:1" })
+  set_window_defaults(output_winid, { cursorline = false, signcolumn = "no" })
+  set_window_defaults(hints_winid, { cursorline = false, signcolumn = "no" })
 
   return {
     imports_bufnr = imports_bufnr,
@@ -255,19 +258,19 @@ local function build_rows(entries, leader_prefix)
       key_group = "DoxiHintPrefix",
     })
 
-    for _, index in ipairs({ 1, 2, 3 }) do
+    for index = 1, math.min(3, #entries) do
       table.insert(rows[1], entries[index])
     end
 
-    for _, index in ipairs({ 4, 5, 6, 7 }) do
+    for index = 4, #entries do
       table.insert(rows[2], entries[index])
     end
   else
-    for _, index in ipairs({ 1, 2, 3, 4 }) do
+    for index = 1, math.min(4, #entries) do
       table.insert(rows[1], entries[index])
     end
 
-    for _, index in ipairs({ 5, 6, 7 }) do
+    for index = 5, #entries do
       table.insert(rows[2], entries[index])
     end
   end

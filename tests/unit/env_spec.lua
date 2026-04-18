@@ -40,4 +40,47 @@ return {
       })
     end,
   },
+  {
+    name = "pick_candidates can restrict the picker to provided items without manual entry",
+    fn = function()
+      local captured_opts
+      local picked_path
+
+      local original_select = vim.ui.select
+      vim.ui.select = function(items, opts, on_choice)
+        captured_opts = {
+          prompt = opts.prompt,
+          size = #items,
+        }
+        on_choice(items[1])
+      end
+
+      local ok, err = xpcall(function()
+        env.pick_candidates({
+          items = {
+            {
+              label = "Source buffer LSP",
+              path = "/aligned/python",
+            },
+          },
+          allow_manual = false,
+          prompt = "Confirm Python environment",
+        }, function(path)
+          picked_path = path
+        end)
+
+        t.assert_equal(picked_path, "/aligned/python")
+        t.assert_deep_equal(captured_opts, {
+          prompt = "Confirm Python environment",
+          size = 1,
+        })
+      end, debug.traceback)
+
+      vim.ui.select = original_select
+
+      if not ok then
+        error(err)
+      end
+    end,
+  },
 }
