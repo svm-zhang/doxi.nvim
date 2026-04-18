@@ -12,6 +12,7 @@ package.path = table.concat({
 require("tests").run_suite({
   "tests.unit.backend_spec",
   "tests.unit.compat_spec",
+  "tests.unit.lsp_spec",
   "tests.unit.util_spec",
   "tests.unit.shared_imports_spec",
   "tests.unit.examples_context_spec",
