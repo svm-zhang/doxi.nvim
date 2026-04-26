@@ -140,6 +140,7 @@ local function resolve_signature_help_config(config)
     provider = "ambient",
     relative = "cursor",
     anchor_bias = "below",
+    offset_x = 2,
     offset_y = 1,
     width = nil,
     height = nil,
@@ -207,8 +208,10 @@ function M._apply_signature_help_window_config(winid, config)
   end
 
   local updates = {}
+  local window_config = vim.api.nvim_win_get_config(winid)
   local width = positive_integer(config and config.width)
   local height = positive_integer(config and config.height)
+  local offset_y = positive_integer(config and config.offset_y)
 
   if width then
     updates.width = width
@@ -224,6 +227,30 @@ function M._apply_signature_help_window_config(winid, config)
 
   if config and config.mouse ~= nil then
     updates.mouse = config.mouse
+  end
+
+  if
+    offset_y
+    and config
+    and config.relative == "cursor"
+    and type(window_config.anchor) == "string"
+    and (window_config.relative == "cursor" or window_config.relative == "win")
+  then
+    local vertical_anchor = window_config.anchor:sub(1, 1)
+    if vertical_anchor == "N" then
+      updates.row = 1 + offset_y
+    elseif vertical_anchor == "S" then
+      updates.row = -offset_y
+    end
+
+    if updates.row then
+      updates.relative = window_config.relative
+      updates.anchor = window_config.anchor
+      updates.col = window_config.col
+      if window_config.relative == "win" then
+        updates.win = window_config.win
+      end
+    end
   end
 
   if next(updates) == nil then

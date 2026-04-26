@@ -138,6 +138,7 @@ return {
           provider = "doxi",
           relative = "cursor",
           anchor_bias = "below",
+          offset_x = 2,
           offset_y = 1,
           focus = false,
           focusable = false,
@@ -326,8 +327,9 @@ return {
 
                   preview_bufnr = vim.api.nvim_create_buf(false, true)
                   preview_winid = vim.api.nvim_open_win(preview_bufnr, false, {
-                    relative = "editor",
-                    row = 0,
+                    relative = "cursor",
+                    anchor = "SW",
+                    row = 1,
                     col = 0,
                     width = 30,
                     height = 3,
@@ -369,10 +371,12 @@ return {
           t.assert_equal(captured.preview.opts.mouse, true)
           t.assert_equal(captured.preview.opts.relative, "cursor")
           t.assert_equal(captured.preview.opts.anchor_bias, "below")
+          t.assert_equal(captured.preview.opts.offset_x, 2)
           t.assert_equal(captured.preview.opts.offset_y, 1)
           t.assert_equal(captured.preview.opts.title, "Signature Help: pyright")
           t.assert_equal(captured.preview.opts.provider, nil)
           t.assert_equal(captured.preview.opts._update_win, nil)
+          t.assert_equal(vim.api.nvim_win_get_config(preview_winid).row, -1)
           t.assert_equal(vim.api.nvim_win_get_config(preview_winid).width, 40)
           t.assert_equal(vim.api.nvim_win_get_config(preview_winid).height, 11)
           t.assert_equal(vim.api.nvim_win_get_config(preview_winid).focusable, false)

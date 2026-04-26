@@ -9,6 +9,7 @@ local defaults = {
 			provider = "ambient",
 			relative = "cursor",
 			anchor_bias = "below",
+			offset_x = 2,
 			offset_y = 1,
 			width = 100,
 			height = 20,
