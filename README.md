@@ -13,7 +13,7 @@ It is built for one narrow workflow: select a docstring example region, open a f
 - Render deterministic doctest transcripts with `>>>` and `...` prompts.
 - Keep a persistent Python subprocess alive for the session lifetime.
 - Restart the interpreter cleanly or restart and rerun everything.
-- Reuse supported source-buffer Python LSP clients inside the editor pane (`pyright`, `basedpyright`, `pylsp`, `ruff`).
+- Reuse supported source-buffer Python LSP clients inside the editor pane.
 - Prefer the source-buffer interpreter when it can be recovered, and fall back safely when it cannot.
 - Apply the transcript back to the original selected source range safely.
 
@@ -209,6 +209,30 @@ appear in the visible transcript unless shared import replay fails.
 
 If you open above the previous top block in the section, shared imports below
 that insertion point are not inherited.
+
+## Editor-Pane LSP Support
+
+When `lsp.enabled = true`, `doxi.nvim` can reuse supported Python LSP clients
+already attached to the source buffer and attach them to the session editor
+pane. This lets the editor pane behave more like a normal Python buffer, with
+features such as completion, diagnostics, hover, and signature help when the
+underlying LSP server provides them.
+
+Supported clients currently include `pyright`, `basedpyright`, `pylsp`. The exact behavior depends on the server.
+
+Signature help has two rendering modes:
+
+- `lsp.signature_help.provider = "ambient"` keeps your normal Neovim signature
+  help setup.
+- `lsp.signature_help.provider = "doxi"` makes `doxi.nvim` request signature
+  help and render it in its own floating window inside the session editor pane.
+
+The `doxi` signature provider is only a rendering choice for the session editor
+pane. Under the hood, it uses Neovim's built-in LSP
+`textDocument/signatureHelp` request, converts the response with
+`vim.lsp.util.convert_signature_help_to_markdown_lines()`, and renders it with
+`vim.lsp.util.open_floating_preview()`. It does not turn `doxi.nvim` into a
+general LSP manager.
 
 ## Shared Import Rules
 
