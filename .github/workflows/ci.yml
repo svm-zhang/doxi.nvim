@@ -21,13 +21,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            neovim: v0.10.4
+            neovim: v0.11.0
           - os: ubuntu-latest
-            neovim: stable
+            neovim: v0.12.0
           - os: macos-latest
-            neovim: v0.10.4
+            neovim: v0.11.0
           - os: macos-latest
-            neovim: stable
+            neovim: v0.12.0
 
     steps:
       - name: Check out repository

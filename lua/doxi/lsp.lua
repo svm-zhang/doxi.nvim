@@ -377,10 +377,6 @@ local function build_preview_options(bufnr, config, client_name)
   opts.focus_id = opts.focus_id or ("doxi.signature_help.%d"):format(bufnr)
   opts.title = opts.border and ("Signature Help: %s"):format(client_name) or nil
 
-  if vim.fn.has("nvim-0.11") == 0 then
-    opts.anchor_bias = nil
-  end
-
   normalize_preview_size(opts)
 
   return opts

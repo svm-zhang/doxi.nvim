@@ -19,7 +19,7 @@ It is built for one narrow workflow: select a docstring example region, open a f
 
 ## Requirements
 
-- Neovim `0.10.0+`.
+- Neovim `0.11.0+`.
 - Python available on your machine.
 - Python Treesitter parser available to Neovim.
 
