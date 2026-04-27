@@ -1,8 +1,9 @@
 local backend = require("doxi.backend")
 local config = require("doxi.config")
-local env = require("doxi.env")
 local examples_context = require("doxi.examples_context")
+local interpreter = require("doxi.interpreter")
 local inserter = require("doxi.inserter")
+local lsp = require("doxi.lsp")
 local selection = require("doxi.selection")
 local shared_imports = require("doxi.shared_imports")
 local transcript = require("doxi.transcript")
@@ -32,8 +33,31 @@ local function close_active_session()
   end
 end
 
-local function create_session(target, interpreter_path, context)
+local function bind_common_keymaps(session, bufnr, keymaps)
+  session:_map(bufnr, "n", keymaps.run_all, function()
+    session:run_all()
+  end, "Run all example code")
+
+  session:_map(bufnr, "n", keymaps.restart, function()
+    session:restart()
+  end, "Restart Python session")
+
+  session:_map(bufnr, "n", keymaps.restart_rerun, function()
+    session:restart_and_rerun()
+  end, "Restart and rerun example code")
+
+  session:_map(bufnr, "n", keymaps.apply, function()
+    session:apply()
+  end, "Apply transcript")
+
+  session:_map(bufnr, "n", keymaps.cancel, function()
+    session:close()
+  end, "Cancel example session")
+end
+
+local function create_session(target, interpreter_info, context)
   close_active_session()
+  local current_config = config.get()
 
   local session = setmetatable({
     kind = target.kind,
@@ -49,12 +73,17 @@ local function create_session(target, interpreter_path, context)
       ordered = {},
       seen = {},
     }),
-    interpreter_path = interpreter_path,
+    editor_buffer_name = util.synthetic_editor_path(target.source_bufnr),
+    interpreter_path = interpreter_info.interpreter_path,
+    interpreter_mode = interpreter_info.mode,
+    interpreter_provenance = interpreter_info.provenance,
+    keymaps = vim.deepcopy(current_config.session_keymaps),
+    lsp_config = vim.deepcopy(current_config.lsp),
     closed = false,
   }, Session)
 
   session.backend = backend.new({
-    interpreter_path = interpreter_path,
+    interpreter_path = interpreter_info.interpreter_path,
   })
   session.view = ui.open(session)
   session.imports_bufnr = session.view.imports_bufnr
@@ -69,9 +98,21 @@ local function create_session(target, interpreter_path, context)
   ui.set_imports_lines(session.view, shared_imports.render_lines(session.shared_imports))
   ui.set_editor_lines(session.view, target.editor_lines or {})
   ui.set_output_lines(session.view, {})
-  ui.set_hints(session.view, config.get().session_keymaps)
+  ui.set_hints(session.view, session.keymaps)
+  session.lsp_state = lsp.attach_from_source({
+    source_bufnr = session.source_bufnr,
+    editor_bufnr = session.editor_bufnr,
+    enabled = session.lsp_config.enabled,
+    signature_help_config = session.lsp_config.signature_help,
+  })
   session:_set_keymaps()
   ui.focus_editor(session.view)
+
+  if session.lsp_config.warn_unsupported then
+    if session.lsp_state.status == "unsupported" or session.lsp_state.status == "attach_failed" then
+      util.notify(session.lsp_state.message, vim.log.levels.WARN)
+    end
+  end
 
   active_session = session
   return session
@@ -91,16 +132,21 @@ local function create_target(line1, line2)
 end
 
 local function open_with_request(request)
-  env.pick_interpreter({
+  interpreter.pick_for_open({
     bufnr = request.target.source_bufnr,
-  }, function(path)
-    if not path then
+  }, function(result)
+    if not result or not result.interpreter_path then
       return
     end
 
-    local _, err = create_session(request.target, path, request.context)
-    if err then
+    local ok, err = pcall(create_session, request.target, result, request.context)
+    if not ok then
       util.notify(err, vim.log.levels.ERROR)
+      return
+    end
+
+    if result.warning then
+      util.notify(result.warning, vim.log.levels.WARN)
     end
   end)
 end
@@ -136,89 +182,13 @@ function Session:_map(bufnr, mode, lhs, rhs, desc)
 end
 
 function Session:_set_keymaps()
-  local keymaps = config.get().session_keymaps
-
-  self:_map(self.editor_bufnr, "n", keymaps.run_all, function()
-    self:run_all()
-  end, "Run all example code")
+  local keymaps = self.keymaps
 
   self:_map(self.editor_bufnr, "x", keymaps.run_selection, ":DoxiRunSelection<CR>", "Run selected example code")
-
-  self:_map(self.editor_bufnr, "n", keymaps.restart, function()
-    self:restart()
-  end, "Restart Python session")
-
-  self:_map(self.editor_bufnr, "n", keymaps.restart_rerun, function()
-    self:restart_and_rerun()
-  end, "Restart and rerun example code")
-
-  self:_map(self.editor_bufnr, "n", keymaps.env_switch, function()
-    self:env_switch()
-  end, "Switch Python environment")
-
-  self:_map(self.editor_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.editor_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
-
-  self:_map(self.output_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.output_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
-
-  self:_map(self.imports_bufnr, "n", keymaps.run_all, function()
-    self:run_all()
-  end, "Run all example code")
-
-  self:_map(self.imports_bufnr, "n", keymaps.restart, function()
-    self:restart()
-  end, "Restart Python session")
-
-  self:_map(self.imports_bufnr, "n", keymaps.restart_rerun, function()
-    self:restart_and_rerun()
-  end, "Restart and rerun example code")
-
-  self:_map(self.imports_bufnr, "n", keymaps.env_switch, function()
-    self:env_switch()
-  end, "Switch Python environment")
-
-  self:_map(self.imports_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.imports_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
-
-  self:_map(self.hints_bufnr, "n", keymaps.run_all, function()
-    self:run_all()
-  end, "Run all example code")
-
-  self:_map(self.hints_bufnr, "n", keymaps.restart, function()
-    self:restart()
-  end, "Restart Python session")
-
-  self:_map(self.hints_bufnr, "n", keymaps.restart_rerun, function()
-    self:restart_and_rerun()
-  end, "Restart and rerun example code")
-
-  self:_map(self.hints_bufnr, "n", keymaps.env_switch, function()
-    self:env_switch()
-  end, "Switch Python environment")
-
-  self:_map(self.hints_bufnr, "n", keymaps.apply, function()
-    self:apply()
-  end, "Apply transcript")
-
-  self:_map(self.hints_bufnr, "n", keymaps.cancel, function()
-    self:close()
-  end, "Cancel example session")
+  bind_common_keymaps(self, self.editor_bufnr, keymaps)
+  bind_common_keymaps(self, self.output_bufnr, keymaps)
+  bind_common_keymaps(self, self.imports_bufnr, keymaps)
+  bind_common_keymaps(self, self.hints_bufnr, keymaps)
 end
 
 function Session:set_transcript(lines)
@@ -359,36 +329,6 @@ function Session:restart_and_rerun()
   end)
 end
 
-function Session:env_switch()
-  env.pick_interpreter({
-    bufnr = self.source_bufnr,
-    current = self.interpreter_path,
-  }, function(path)
-    if self.closed or not path or path == self.interpreter_path then
-      return
-    end
-
-    self.interpreter_path = path
-    self.backend:set_interpreter(path)
-    self.backend:restart(function(_, err)
-      if self.closed then
-        return
-      end
-
-      if err then
-        util.notify(err, vim.log.levels.ERROR)
-        return
-      end
-
-      if config.get().clear_transcript_on_env_switch then
-        self:set_transcript({})
-      end
-
-      util.notify(("Switched environment to %s"):format(path))
-    end)
-  end)
-end
-
 function Session:apply()
   local ok, err = inserter.replace({
     bufnr = self.source_bufnr,
@@ -415,6 +355,10 @@ function Session:close()
 
   self.closed = true
 
+  if self.lsp_state then
+    lsp.detach(self.lsp_state)
+  end
+
   if self.backend then
     self.backend:stop()
   end
@@ -432,6 +376,7 @@ function Session:close()
   self.editor_bufnr = nil
   self.output_bufnr = nil
   self.hints_bufnr = nil
+  self.lsp_state = nil
   self.transcript_lines = {}
 end
 
@@ -528,14 +473,6 @@ end
 function M.restart_and_rerun()
   if active_session then
     active_session:restart_and_rerun()
-  else
-    util.notify("No active doxi session.", vim.log.levels.WARN)
-  end
-end
-
-function M.env_switch()
-  if active_session then
-    active_session:env_switch()
   else
     util.notify("No active doxi session.", vim.log.levels.WARN)
   end

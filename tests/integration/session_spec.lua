@@ -1,25 +1,31 @@
 local backend = require("doxi.backend")
-local env = require("doxi.env")
 local examples_context = require("doxi.examples_context")
+local interpreter = require("doxi.interpreter")
+local lsp = require("doxi.lsp")
 local session = require("doxi.session")
 local util = require("doxi.util")
 local t = require("tests")
 
 local function run_with_picker_stub(fn)
-  local original_picker = env.pick_interpreter
   local python = vim.fn.exepath("python3")
 
   if python == "" then
     error("python3 is required for session integration tests.")
   end
 
-  env.pick_interpreter = function(_, callback)
-    callback(python)
+  local original_picker = interpreter.pick_for_open
+  interpreter.pick_for_open = function(_, callback)
+    callback({
+      interpreter_path = python,
+      mode = "fallback",
+      provenance = "discovered",
+      warning = nil,
+    })
   end
 
   local ok, err = xpcall(fn, debug.traceback)
 
-  env.pick_interpreter = original_picker
+  interpreter.pick_for_open = original_picker
 
   if session.get_active() then
     session.cancel()
@@ -81,6 +87,254 @@ local function with_override(target, key, value, fn)
 end
 
 return {
+  {
+    name = "session attaches and detaches editor-pane lsp state without affecting open/apply flow",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub(nil, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
+            local attach_opts
+            local detached_state
+
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_buf_set_name(source_bufnr, "/project/example.py")
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+              "def f():",
+              '    """',
+              "    Examples:",
+              "        >>> before()",
+              "        1",
+              "",
+              '    """',
+            })
+
+            local ok, err = xpcall(function()
+              with_override(lsp, "attach_from_source", function(opts)
+                attach_opts = opts
+                return {
+                  status = "attached",
+                  editor_bufnr = opts.editor_bufnr,
+                  attached_client_ids = { 91 },
+                  features = {
+                    completion = true,
+                    signature_help = true,
+                    diagnostics = true,
+                  },
+                }
+              end, function()
+                with_override(lsp, "detach", function(state)
+                  detached_state = vim.deepcopy(state)
+                end, function()
+                  session.open({
+                    line1 = 6,
+                    line2 = 6,
+                    range = 2,
+                  })
+
+                  local active = t.wait_until(function()
+                    return session.get_active()
+                  end, 2000, "Session did not open.")
+
+                  t.assert_equal(attach_opts.source_bufnr, source_bufnr)
+                  t.assert_equal(attach_opts.editor_bufnr, active.editor_bufnr)
+                  t.assert_equal(attach_opts.signature_help_config.provider, "ambient")
+                  t.assert_equal(vim.api.nvim_get_option_value("buftype", { buf = active.editor_bufnr }), "nofile")
+                  t.assert_equal(vim.api.nvim_buf_get_name(active.editor_bufnr):match("^/project/%.doxi%-session%-.+%.py$") ~= nil, true)
+
+                  session.cancel()
+
+                  t.wait_until(function()
+                    return session.get_active() == nil
+                  end, 2000, "Session did not close.")
+
+                  t.assert_deep_equal(detached_state, {
+                    status = "attached",
+                    editor_bufnr = attach_opts.editor_bufnr,
+                    attached_client_ids = { 91 },
+                    features = {
+                      completion = true,
+                      signature_help = true,
+                      diagnostics = true,
+                    },
+                  })
+                end)
+              end)
+            end, debug.traceback)
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
+        end)
+      end)
+    end,
+  },
+  {
+    name = "session warns for unsupported editor-pane lsp reuse but still opens",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub(nil, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
+            local notifications = {}
+
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+              "def f():",
+              '    """',
+              "    Examples:",
+              "        >>> before()",
+              "        1",
+              "",
+              '    """',
+            })
+
+            local ok, err = xpcall(function()
+              with_override(lsp, "attach_from_source", function(opts)
+                return {
+                  status = "unsupported",
+                  editor_bufnr = opts.editor_bufnr,
+                  attached_client_ids = {},
+                  features = {
+                    completion = false,
+                    signature_help = false,
+                    diagnostics = false,
+                  },
+                  message = "unsupported test warning",
+                }
+              end, function()
+                with_override(util, "notify", function(message, level)
+                  table.insert(notifications, {
+                    message = message,
+                    level = level,
+                  })
+                end, function()
+                  session.open({
+                    line1 = 6,
+                    line2 = 6,
+                    range = 2,
+                  })
+
+                  local active = t.wait_until(function()
+                    return session.get_active()
+                  end, 2000, "Session did not open.")
+
+                  t.assert_equal(active ~= nil, true)
+                  t.assert_deep_equal(notifications, {
+                    {
+                      message = "unsupported test warning",
+                      level = vim.log.levels.WARN,
+                    },
+                  })
+
+                  session.cancel()
+                end)
+              end)
+            end, debug.traceback)
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
+        end)
+      end)
+    end,
+  },
+  {
+    name = "session warns when it must use a fallback interpreter after lsp recovery fails",
+    fn = function()
+      run_with_docstring_gate_stub(function()
+        run_with_context_stub(nil, function()
+          local current_bufnr = vim.api.nvim_get_current_buf()
+          local source_bufnr = vim.api.nvim_create_buf(true, true)
+          local notifications = {}
+
+          vim.api.nvim_set_current_buf(source_bufnr)
+          vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+          vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+            "def f():",
+            '    """',
+            "    Examples:",
+            "        >>> before()",
+            "        1",
+            "",
+            '    """',
+          })
+
+          local ok, err = xpcall(function()
+            with_override(interpreter, "pick_for_open", function(_, callback)
+              callback({
+                interpreter_path = vim.fn.exepath("python3"),
+                mode = "fallback",
+                provenance = "discovered",
+                warning = interpreter.fallback_warning(),
+              })
+            end, function()
+              with_override(util, "notify", function(message, level)
+                table.insert(notifications, {
+                  message = message,
+                  level = level,
+                })
+              end, function()
+                session.open({
+                  line1 = 6,
+                  line2 = 6,
+                  range = 2,
+                })
+
+                local active = t.wait_until(function()
+                  return session.get_active()
+                end, 2000, "Session did not open.")
+
+                t.assert_equal(active ~= nil, true)
+                t.assert_deep_equal(notifications, {
+                  {
+                    message = interpreter.fallback_warning(),
+                    level = vim.log.levels.WARN,
+                  },
+                })
+
+                session.cancel()
+              end)
+            end)
+          end, debug.traceback)
+
+          if vim.api.nvim_buf_is_valid(source_bufnr) then
+            pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+          end
+
+          if vim.api.nvim_buf_is_valid(current_bufnr) then
+            vim.api.nvim_set_current_buf(current_bufnr)
+          end
+
+          if not ok then
+            error(err)
+          end
+        end)
+      end)
+    end,
+  },
   {
     name = "backend restart starts a fresh interpreter process",
     fn = function()
@@ -469,8 +723,9 @@ return {
       })
 
       local ok, err = xpcall(function()
-        with_override(env, "pick_interpreter", function()
+        with_override(interpreter, "pick_for_open", function(_, callback)
           picker_calls = picker_calls + 1
+          callback(nil)
         end, function()
           with_override(util, "notify", function() end, function()
             with_override(util, "selection_in_python_docstring", function()
@@ -537,7 +792,7 @@ return {
               return true
             end, function()
               run_with_context_stub(nil, function()
-                with_override(env, "pick_interpreter", function(_, callback)
+                with_override(interpreter, "pick_for_open", function(_, callback)
                   picker_calls = picker_calls + 1
                   callback(nil)
                 end, function()

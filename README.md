@@ -13,12 +13,13 @@ It is built for one narrow workflow: select a docstring example region, open a f
 - Render deterministic doctest transcripts with `>>>` and `...` prompts.
 - Keep a persistent Python subprocess alive for the session lifetime.
 - Restart the interpreter cleanly or restart and rerun everything.
-- Discover Python interpreters from common project layouts and switch environments mid-session.
+- Reuse supported source-buffer Python LSP clients inside the editor pane.
+- Prefer the source-buffer interpreter when it can be recovered, and fall back safely when it cannot.
 - Apply the transcript back to the original selected source range safely.
 
 ## Requirements
 
-- Neovim `0.10.0+`.
+- Neovim `0.11.0+`.
 - Python available on your machine.
 - Python Treesitter parser available to Neovim.
 
@@ -72,7 +73,13 @@ Default configuration:
 ```lua
 require("doxi").setup({
   python_path = nil,
-  clear_transcript_on_env_switch = true,
+  lsp = {
+    enabled = true,
+    warn_unsupported = true,
+    signature_help = {
+      provider = "ambient",
+    },
+  },
   ui = {
     width = 100,
     height = 0.75,
@@ -86,7 +93,6 @@ require("doxi").setup({
     run_selection = "<leader>rs",
     restart = "<leader>rr",
     restart_rerun = "<leader>rR",
-    env_switch = "<leader>re",
     apply = "<leader>da",
     cancel = "q",
   },
@@ -95,11 +101,16 @@ require("doxi").setup({
 
 Configuration notes:
 
-- `python_path` takes priority over automatic interpreter discovery
-- `ui.width` accepts either a fixed number of columns such as `100` or a ratio such as `0.75`
-- `ui.imports_height` sets the minimum height of the read-only shared-imports pane
-- `clear_transcript_on_env_switch = true` clears the output pane after a real environment change
-- `session_keymaps` only affect the floating session buffers, not your source buffer
+| Option | Default / choices | Meaning |
+| --- | --- | --- |
+| `python_path` | `nil` or explicit Python path | Takes priority over automatic interpreter discovery. |
+| `lsp.enabled` | `true` | Enables editor-pane reuse of supported source-buffer Python LSP clients: `pyright`, `basedpyright`, `pylsp`, and `ruff`. |
+| `lsp.warn_unsupported` | `true` | Warns when attached source-buffer clients are unsupported or when interpreter fallback breaks alignment. |
+| `lsp.signature_help.provider` | `"ambient"` or `"doxi"` | `"ambient"` keeps your editor's existing signature-help behavior. `"doxi"` makes `doxi` request and render signature help inside the `doxi` editor pane. |
+| `lsp.signature_help.*` | floating-window options such as `width`, `height`, `focusable`, `mouse` | Matter only when `lsp.signature_help.provider = "doxi"`. The `doxi` path is scoped to the editor pane and may suppress known conflicting signature-help providers there when needed, but it does not promise universal suppression of arbitrary third-party plugins. |
+| `ui.width` | fixed columns like `100` or ratio like `0.75` | Controls session width. |
+| `ui.imports_height` | integer | Sets the minimum height of the read-only shared-imports pane. |
+| `session_keymaps` | mapping table | Only affect the floating session buffers, not your source buffer. |
 
 Suggested source-buffer keybind:
 
@@ -199,6 +210,30 @@ appear in the visible transcript unless shared import replay fails.
 If you open above the previous top block in the section, shared imports below
 that insertion point are not inherited.
 
+## Editor-Pane LSP Support
+
+When `lsp.enabled = true`, `doxi.nvim` can reuse supported Python LSP clients
+already attached to the source buffer and attach them to the session editor
+pane. This lets the editor pane behave more like a normal Python buffer, with
+features such as completion, diagnostics, hover, and signature help when the
+underlying LSP server provides them.
+
+Supported clients currently include `pyright`, `basedpyright`, `pylsp`. The exact behavior depends on the server.
+
+Signature help has two rendering modes:
+
+- `lsp.signature_help.provider = "ambient"` keeps your normal Neovim signature
+  help setup.
+- `lsp.signature_help.provider = "doxi"` makes `doxi.nvim` request signature
+  help and render it in its own floating window inside the session editor pane.
+
+The `doxi` signature provider is only a rendering choice for the session editor
+pane. Under the hood, it uses Neovim's built-in LSP
+`textDocument/signatureHelp` request, converts the response with
+`vim.lsp.util.convert_signature_help_to_markdown_lines()`, and renders it with
+`vim.lsp.util.open_floating_preview()`. It does not turn `doxi.nvim` into a
+general LSP manager.
+
 ## Shared Import Rules
 
 `doxi.nvim` supports shared imports inside one supported `Examples` section.
@@ -232,7 +267,13 @@ Practical consequences:
 
 ## Interpreter Discovery
 
-Before the session opens, `doxi` asks you to choose a Python interpreter. Discovery
+Before the session opens, `doxi` confirms which Python interpreter it will use.
+
+When a supported Python LSP is attached to the source buffer and `doxi` can
+recover its interpreter context, the picker shows only that aligned
+interpreter.
+
+Otherwise, `doxi` falls back to normal interpreter discovery. Discovery
 currently checks, in priority order:
 
 1. Configured `python_path`.
@@ -244,12 +285,15 @@ currently checks, in priority order:
 7. `python`.
 8. Manual path entry.
 
-Switching environments inside an active session behaves like this:
+When fallback discovery finds multiple candidates, `doxi` suppresses repeated
+entries for the same environment while still showing genuinely different
+interpreters from different sources.
 
-- Choosing a different interpreter tears down the current Python process and starts a fresh one.
-- Previous runtime state is discarded.
-- The transcript is cleared by default.
-- Canceling the picker or choosing the same interpreter keeps the current interpreter and state unchanged.
+If `doxi` must fall back while a supported source-buffer LSP is attached, it
+warns that editor assistance and code execution may not match.
+
+Canceling the picker leaves the source buffer unchanged and does not open a
+session.
 
 ## Commands
 
@@ -267,7 +311,6 @@ Switching environments inside an active session behaves like this:
 | `:DoxiRunSelection` | Run the selected code from the editor pane only. |
 | `:DoxiRestart` | Start a fresh interpreter and clear the transcript. |
 | `:DoxiRestartRerun` | Start a fresh interpreter, then rerun the full editor buffer. |
-| `:DoxiEnvSwitch` | Pick a different Python interpreter for the current session. |
 | `:DoxiApply` | Replace the originally selected source range with the current transcript. |
 | `:DoxiCancel` | Close the session without modifying the source buffer. |
 
@@ -281,7 +324,6 @@ These mappings apply inside the floating session buffers:
 | run selection | `<leader>rs` |
 | restart | `<leader>rr` |
 | restart and rerun | `<leader>rR` |
-| switch environment | `<leader>re` |
 | apply transcript | `<leader>da` |
 | cancel session | `q` |
 

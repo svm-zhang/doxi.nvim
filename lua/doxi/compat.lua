@@ -2,7 +2,7 @@ local M = {}
 
 local minimum = {
   major = 0,
-  minor = 10,
+  minor = 11,
   patch = 0,
 }
 
@@ -75,7 +75,7 @@ function M.check(version)
     )
   end
 
-  if vim.fn.has("nvim-0.10") == 1 then
+  if vim.fn.has("nvim-0.11") == 1 then
     return true
   end
 

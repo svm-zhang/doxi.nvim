@@ -1,6 +1,7 @@
 local compat = require("doxi.compat")
 
 local M = {}
+local editor_buffer_counter = 0
 
 local function get_json_encode()
   return (vim.json and vim.json.encode) or vim.fn.json_encode
@@ -34,6 +35,47 @@ function M.join_paths(...)
   end
 
   return table.concat(parts, "/")
+end
+
+function M.is_absolute_path(path)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+
+  return path:sub(1, 1) == "/" or path:match("^[A-Za-z]:[\\/]")
+end
+
+function M.normalize_path(path)
+  if type(path) ~= "string" or path == "" then
+    return path
+  end
+
+  if vim.fs and vim.fs.normalize then
+    return vim.fs.normalize(path)
+  end
+
+  return path
+end
+
+function M.synthetic_editor_path(source_bufnr)
+  local tmpdir = (vim.uv and vim.uv.os_tmpdir and vim.uv.os_tmpdir()) or "/tmp"
+  local source_name = source_bufnr and vim.api.nvim_buf_get_name(source_bufnr) or ""
+  local base_dir = nil
+
+  if source_name ~= "" then
+    local expanded = M.normalize_path(vim.fn.fnamemodify(source_name, ":p"))
+    if M.is_absolute_path(expanded) then
+      base_dir = vim.fs.dirname(expanded)
+    end
+  end
+
+  if not base_dir or base_dir == "" then
+    base_dir = M.normalize_path(tmpdir)
+  end
+
+  editor_buffer_counter = editor_buffer_counter + 1
+
+  return M.join_paths(base_dir, (".doxi-session-%d-%d.py"):format(vim.fn.getpid(), editor_buffer_counter))
 end
 
 function M.get_plugin_root()

@@ -111,6 +111,29 @@ end
 
 return {
   {
+    name = "synthetic_editor_path uses the source buffer directory when available",
+    fn = function()
+      local source_bufnr = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(source_bufnr, "/project/main.py")
+
+      local path = util.synthetic_editor_path(source_bufnr)
+
+      t.assert_equal(path:match("^/project/%.doxi%-session%-.+%.py$") ~= nil, true)
+    end,
+  },
+  {
+    name = "synthetic_editor_path falls back to the temp directory for unnamed source buffers",
+    fn = function()
+      local source_bufnr = vim.api.nvim_create_buf(false, true)
+      local tmpdir = util.normalize_path((vim.uv and vim.uv.os_tmpdir and vim.uv.os_tmpdir()) or "/tmp")
+
+      local path = util.synthetic_editor_path(source_bufnr)
+
+      t.assert_equal(path:sub(1, #tmpdir), tmpdir)
+      t.assert_equal(path:match("%.py$") ~= nil, true)
+    end,
+  },
+  {
     name = "get_visual_line_range uses the active visual selection when still in visual mode",
     fn = function()
       with_override(vim.api, "nvim_get_mode", function()
