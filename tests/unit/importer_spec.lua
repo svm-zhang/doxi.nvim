@@ -27,6 +27,89 @@ return {
     end,
   },
   {
+    name = "recovers missing continuation prompts inside a bracketed expression",
+    fn = function()
+      local result, err = importer.parse_doctest_block({
+        '    >>> cigar_str = "27S89M1I11M"',
+        "    >>> assert parse_cigar(cigar_str) == [",
+        '        ("27", "S"),',
+        '        ("89", "M"),',
+        '        ("1", "I"),',
+        '        ("11", "M")',
+        "    ]",
+        "    true",
+      })
+
+      t.assert_equal(err, nil, "The importer should recover obvious missing continuation prompts.")
+      t.assert_deep_equal(result.source_lines, {
+        'cigar_str = "27S89M1I11M"',
+        "assert parse_cigar(cigar_str) == [",
+        '    ("27", "S"),',
+        '    ("89", "M"),',
+        '    ("1", "I"),',
+        '    ("11", "M")',
+        "]",
+      })
+    end,
+  },
+  {
+    name = "recovers missing continuation prompts inside a function call",
+    fn = function()
+      local result, err = importer.parse_doctest_block({
+        "    >>> value = make_value(",
+        '        "abc",',
+        "        key=True,",
+        "    )",
+        "    >>> value",
+        "    3",
+      })
+
+      t.assert_equal(err, nil, "The importer should recover missing continuation prompts in calls.")
+      t.assert_deep_equal(result.source_lines, {
+        "value = make_value(",
+        '    "abc",',
+        "    key=True,",
+        ")",
+        "value",
+      })
+    end,
+  },
+  {
+    name = "recovers missing continuation prompts for indented block bodies",
+    fn = function()
+      local result, err = importer.parse_doctest_block({
+        "    >>> def f(x):",
+        "        return x + 1",
+        "    >>> f(3)",
+        "    4",
+      })
+
+      t.assert_equal(err, nil, "The importer should recover missing continuation prompts in block bodies.")
+      t.assert_deep_equal(result.source_lines, {
+        "def f(x):",
+        "    return x + 1",
+        "f(3)",
+      })
+    end,
+  },
+  {
+    name = "does not import output after recovered block source completes",
+    fn = function()
+      local result, err = importer.parse_doctest_block({
+        "    >>> for value in [1, 2]:",
+        "        print(value)",
+        "    1",
+        "    2",
+      })
+
+      t.assert_equal(err, nil, "The importer should accept malformed block source with output.")
+      t.assert_deep_equal(result.source_lines, {
+        "for value in [1, 2]:",
+        "    print(value)",
+      })
+    end,
+  },
+  {
     name = "accepts multiple doctest groups separated only by blank lines",
     fn = function()
       local result, err = importer.parse_doctest_block({
