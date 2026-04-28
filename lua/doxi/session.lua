@@ -16,6 +16,7 @@ local Session = {}
 Session.__index = Session
 
 local active_session = nil
+local session_id = 0
 
 local function ensure_python_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -55,11 +56,17 @@ local function bind_common_keymaps(session, bufnr, keymaps)
   end, "Cancel example session")
 end
 
+local function valid_win(winid)
+  return winid and vim.api.nvim_win_is_valid(winid)
+end
+
 local function create_session(target, interpreter_info, context)
   close_active_session()
   local current_config = config.get()
+  session_id = session_id + 1
 
   local session = setmetatable({
+    id = session_id,
     kind = target.kind,
     workflow = target.kind == "blank" and "new example" or "edit example",
     source_bufnr = target.source_bufnr,
@@ -78,7 +85,9 @@ local function create_session(target, interpreter_info, context)
     interpreter_mode = interpreter_info.mode,
     interpreter_provenance = interpreter_info.provenance,
     keymaps = vim.deepcopy(current_config.session_keymaps),
+    ui_config = vim.deepcopy(current_config.ui),
     lsp_config = vim.deepcopy(current_config.lsp),
+    closing = false,
     closed = false,
   }, Session)
 
@@ -94,6 +103,7 @@ local function create_session(target, interpreter_info, context)
   session.output_winid = session.view.output_winid
   session.hints_bufnr = session.view.hints_bufnr
   session.hints_winid = session.view.hints_winid
+  session:_set_panes()
 
   ui.set_imports_lines(session.view, shared_imports.render_lines(session.shared_imports))
   ui.set_editor_lines(session.view, target.editor_lines or {})
@@ -106,6 +116,7 @@ local function create_session(target, interpreter_info, context)
     signature_help_config = session.lsp_config.signature_help,
   })
   session:_set_keymaps()
+  session:_set_autocmds()
   ui.focus_editor(session.view)
 
   if session.lsp_config.warn_unsupported then
@@ -189,6 +200,261 @@ function Session:_set_keymaps()
   bind_common_keymaps(self, self.output_bufnr, keymaps)
   bind_common_keymaps(self, self.imports_bufnr, keymaps)
   bind_common_keymaps(self, self.hints_bufnr, keymaps)
+
+  for _, pane in ipairs(self.owned_panes or {}) do
+    self:_map(pane.bufnr, "n", keymaps.focus_next_pane, function()
+      self:focus_next_pane()
+    end, "Focus next doxi pane")
+
+    self:_map(pane.bufnr, "n", keymaps.focus_previous_pane, function()
+      self:focus_previous_pane()
+    end, "Focus previous doxi pane")
+  end
+end
+
+function Session:_set_panes()
+  self.work_panes = {
+    {
+      name = "imports",
+      bufnr = self.imports_bufnr,
+      winid = self.imports_winid,
+    },
+    {
+      name = "editor",
+      bufnr = self.editor_bufnr,
+      winid = self.editor_winid,
+    },
+    {
+      name = "output",
+      bufnr = self.output_bufnr,
+      winid = self.output_winid,
+    },
+  }
+
+  self.owned_panes = vim.deepcopy(self.work_panes)
+  table.insert(self.owned_panes, {
+    name = "hints",
+    bufnr = self.hints_bufnr,
+    winid = self.hints_winid,
+  })
+  self.last_work_pane = "editor"
+end
+
+function Session:_work_pane_index_by_win(winid)
+  for index, pane in ipairs(self.work_panes or {}) do
+    if pane.winid == winid and valid_win(pane.winid) then
+      return index
+    end
+  end
+
+  return nil
+end
+
+function Session:_work_pane_index_by_name(name)
+  for index, pane in ipairs(self.work_panes or {}) do
+    if pane.name == name and valid_win(pane.winid) then
+      return index
+    end
+  end
+
+  return nil
+end
+
+function Session:_is_owned_win(winid)
+  if not valid_win(winid) then
+    return false
+  end
+
+  for _, pane in ipairs(self.owned_panes or {}) do
+    if pane.winid == winid then
+      return true
+    end
+  end
+
+  return false
+end
+
+function Session:_owns_winid(winid)
+  for _, pane in ipairs(self.owned_panes or {}) do
+    if pane.winid == winid then
+      return true
+    end
+  end
+
+  return false
+end
+
+function Session:_is_owned_buf(bufnr)
+  for _, pane in ipairs(self.owned_panes or {}) do
+    if pane.bufnr == bufnr then
+      return true
+    end
+  end
+
+  return false
+end
+
+function Session:_remember_current_work_pane()
+  local index = self:_work_pane_index_by_win(vim.api.nvim_get_current_win())
+  if index then
+    self.last_work_pane = self.work_panes[index].name
+  end
+end
+
+function Session:_last_valid_session_win()
+  local last_index = self:_work_pane_index_by_name(self.last_work_pane)
+  if last_index then
+    return self.work_panes[last_index].winid
+  end
+
+  for _, pane in ipairs(self.work_panes or {}) do
+    if valid_win(pane.winid) then
+      self.last_work_pane = pane.name
+      return pane.winid
+    end
+  end
+
+  return nil
+end
+
+function Session:_focus_work_pane(index)
+  local panes = self.work_panes or {}
+  local pane = panes[index]
+
+  if not pane or not valid_win(pane.winid) then
+    return
+  end
+
+  vim.api.nvim_set_current_win(pane.winid)
+  self.last_work_pane = pane.name
+end
+
+function Session:_current_work_pane_index()
+  local current_index = self:_work_pane_index_by_win(vim.api.nvim_get_current_win())
+  if current_index then
+    return current_index
+  end
+
+  return self:_work_pane_index_by_name(self.last_work_pane) or 2
+end
+
+function Session:focus_next_pane()
+  if self.closed then
+    return
+  end
+
+  local panes = self.work_panes or {}
+  if #panes == 0 then
+    return
+  end
+
+  local index = self:_current_work_pane_index() + 1
+  if index > #panes then
+    index = 1
+  end
+
+  self:_focus_work_pane(index)
+end
+
+function Session:focus_previous_pane()
+  if self.closed then
+    return
+  end
+
+  local panes = self.work_panes or {}
+  if #panes == 0 then
+    return
+  end
+
+  local index = self:_current_work_pane_index() - 1
+  if index < 1 then
+    index = #panes
+  end
+
+  self:_focus_work_pane(index)
+end
+
+function Session:_refocus_if_needed()
+  if
+    self.closed
+    or self.closing
+    or not (self.ui_config and self.ui_config.lock_focus)
+  then
+    return
+  end
+
+  local current_win = vim.api.nvim_get_current_win()
+  if self:_is_owned_win(current_win) then
+    self:_remember_current_work_pane()
+    return
+  end
+
+  vim.schedule(function()
+    if
+      self.closed
+      or self.closing
+      or not (self.ui_config and self.ui_config.lock_focus)
+    then
+      return
+    end
+
+    if self:_is_owned_win(vim.api.nvim_get_current_win()) then
+      self:_remember_current_work_pane()
+      return
+    end
+
+    local winid = self:_last_valid_session_win()
+    if winid then
+      pcall(vim.api.nvim_set_current_win, winid)
+      self:_remember_current_work_pane()
+    end
+  end)
+end
+
+function Session:_handle_owned_pane_closed()
+  if self.closed or self.closing then
+    return
+  end
+
+  self:close({
+    reason = "owned_pane_closed",
+  })
+end
+
+function Session:_set_autocmds()
+  self.autocmd_group = vim.api.nvim_create_augroup(("doxi_session_%d"):format(self.id), {
+    clear = true,
+  })
+
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = self.autocmd_group,
+    callback = function()
+      self:_refocus_if_needed()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = self.autocmd_group,
+    callback = function(args)
+      local winid = tonumber(args.match)
+      if winid and self:_owns_winid(winid) then
+        vim.schedule(function()
+          self:_handle_owned_pane_closed()
+        end)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+    group = self.autocmd_group,
+    callback = function(args)
+      if self:_is_owned_buf(args.buf) then
+        vim.schedule(function()
+          self:_handle_owned_pane_closed()
+        end)
+      end
+    end,
+  })
 end
 
 function Session:set_transcript(lines)
@@ -354,6 +620,12 @@ function Session:close()
   end
 
   self.closed = true
+  self.closing = true
+
+  if self.autocmd_group then
+    pcall(vim.api.nvim_del_augroup_by_id, self.autocmd_group)
+    self.autocmd_group = nil
+  end
 
   if self.lsp_state then
     lsp.detach(self.lsp_state)
@@ -375,7 +647,10 @@ function Session:close()
   self.backend = nil
   self.editor_bufnr = nil
   self.output_bufnr = nil
+  self.imports_bufnr = nil
   self.hints_bufnr = nil
+  self.work_panes = nil
+  self.owned_panes = nil
   self.lsp_state = nil
   self.transcript_lines = {}
 end

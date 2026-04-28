@@ -28,6 +28,7 @@ local defaults = {
 		editor_height = 0.45,
 		hints_height = 2,
 		border = "rounded",
+		lock_focus = true,
 	},
 	session_keymaps = {
 		run_all = "<leader>ra",
@@ -36,6 +37,8 @@ local defaults = {
 		restart_rerun = "<leader>rR",
 		apply = "<leader>da",
 		cancel = "q",
+		focus_next_pane = "<leader>j",
+		focus_previous_pane = "<leader>k",
 	},
 }
 
