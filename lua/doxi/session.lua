@@ -7,6 +7,7 @@ local lsp = require("doxi.lsp")
 local selection = require("doxi.selection")
 local shared_imports = require("doxi.shared_imports")
 local transcript = require("doxi.transcript")
+local tmux = require("doxi.tmux")
 local ui = require("doxi.ui")
 local util = require("doxi.util")
 
@@ -59,6 +60,29 @@ end
 local function valid_win(winid)
   return winid and vim.api.nvim_win_is_valid(winid)
 end
+
+local tmux_keymaps = {
+  {
+    key = "tmux_left",
+    direction = "h",
+    desc = "Navigate tmux pane left",
+  },
+  {
+    key = "tmux_down",
+    direction = "j",
+    desc = "Navigate tmux pane down",
+  },
+  {
+    key = "tmux_up",
+    direction = "k",
+    desc = "Navigate tmux pane up",
+  },
+  {
+    key = "tmux_right",
+    direction = "l",
+    desc = "Navigate tmux pane right",
+  },
+}
 
 local function create_session(target, interpreter_info, context)
   close_active_session()
@@ -209,7 +233,21 @@ function Session:_set_keymaps()
     self:_map(pane.bufnr, "n", keymaps.focus_previous_pane, function()
       self:focus_previous_pane()
     end, "Focus previous doxi pane")
+
+    if self:_uses_tmux_navigation() then
+      for _, mapping in ipairs(tmux_keymaps) do
+        self:_map(pane.bufnr, "n", keymaps[mapping.key], function()
+          self:navigate_tmux(mapping.direction)
+        end, mapping.desc)
+      end
+    end
   end
+end
+
+function Session:_uses_tmux_navigation()
+  return self.ui_config
+    and self.ui_config.tmux_navigation ~= false
+    and tmux.available()
 end
 
 function Session:_set_panes()
@@ -372,6 +410,14 @@ function Session:focus_previous_pane()
   end
 
   self:_focus_work_pane(index)
+end
+
+function Session:navigate_tmux(direction)
+  if self.closed then
+    return
+  end
+
+  tmux.navigate(direction)
 end
 
 function Session:_refocus_if_needed()

@@ -29,6 +29,7 @@ local defaults = {
 		hints_height = 2,
 		border = "rounded",
 		lock_focus = true,
+		tmux_navigation = true,
 	},
 	session_keymaps = {
 		run_all = "<leader>ra",
@@ -39,6 +40,10 @@ local defaults = {
 		cancel = "q",
 		focus_next_pane = "<leader>j",
 		focus_previous_pane = "<leader>k",
+		tmux_left = "<C-h>",
+		tmux_down = "<C-j>",
+		tmux_up = "<C-k>",
+		tmux_right = "<C-l>",
 	},
 }
 
