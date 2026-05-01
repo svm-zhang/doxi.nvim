@@ -87,6 +87,8 @@ require("doxi").setup({
     editor_height = 0.45,
     hints_height = 2,
     border = "rounded",
+    lock_focus = true,
+    tmux_navigation = true,
   },
   session_keymaps = {
     run_all = "<leader>ra",
