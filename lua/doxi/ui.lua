@@ -9,6 +9,7 @@ local hint_entries = {
   { key = "run_all", label = "Run all", leader = true },
   { key = "run_selection", label = "Run selection", leader = true },
   { key = "apply", label = "Apply", leader = true },
+  { keys = { "focus_next_pane", "focus_previous_pane" }, label = "Nav panes", leader = true },
   { key = "restart", label = "Restart", leader = true },
   { key = "restart_rerun", label = "Fresh rerun", leader = true },
   { key = "cancel", label = "Cancel", leader = false },
@@ -193,14 +194,29 @@ local function build_entries(keymaps)
   local entries = {}
 
   for _, entry in ipairs(hint_entries) do
-    local key = keymaps[entry.key]
-    if type(key) ~= "string" or key == "" then
-      key = "unmapped"
+    local keys = {}
+
+    if entry.keys then
+      for _, key_name in ipairs(entry.keys) do
+        local key = keymaps[key_name]
+        if type(key) ~= "string" or key == "" then
+          key = "unmapped"
+        end
+
+        table.insert(keys, key)
+      end
+    else
+      local key = keymaps[entry.key]
+      if type(key) ~= "string" or key == "" then
+        key = "unmapped"
+      end
+
+      table.insert(keys, key)
     end
 
     table.insert(entries, {
       label = entry.label,
-      key = key,
+      keys = keys,
       leader = entry.leader,
     })
   end
@@ -214,8 +230,10 @@ local function shared_leader_prefix(entries)
 
   for _, entry in ipairs(entries) do
     if entry.leader then
-      if type(entry.key) ~= "string" or entry.key:sub(1, #prefix) ~= prefix then
-        return nil
+      for _, key in ipairs(entry.keys or {}) do
+        if type(key) ~= "string" or key:sub(1, #prefix) ~= prefix then
+          return nil
+        end
       end
 
       found = true
@@ -230,11 +248,17 @@ local function shared_leader_prefix(entries)
 end
 
 local function display_key(entry, leader_prefix)
-  if leader_prefix and entry.leader and entry.key:sub(1, #leader_prefix) == leader_prefix then
-    return entry.key:sub(#leader_prefix + 1)
+  local display_keys = {}
+
+  for _, key in ipairs(entry.keys or {}) do
+    if leader_prefix and entry.leader and key:sub(1, #leader_prefix) == leader_prefix then
+      table.insert(display_keys, key:sub(#leader_prefix + 1))
+    else
+      table.insert(display_keys, key)
+    end
   end
 
-  return entry.key
+  return table.concat(display_keys, "/")
 end
 
 local function render_entry(entry, leader_prefix)
@@ -258,7 +282,7 @@ local function build_rows(entries, leader_prefix)
   if leader_prefix then
     table.insert(rows[1], {
       label = "Leader",
-      key = leader_prefix,
+      keys = { leader_prefix },
       leader = false,
       key_group = "DoxiHintPrefix",
     })

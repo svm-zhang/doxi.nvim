@@ -22,6 +22,8 @@ return {
         restart_rerun = "<leader>rR",
         apply = "<leader>da",
         cancel = "q",
+        focus_next_pane = "<leader>j",
+        focus_previous_pane = "<leader>k",
       })
 
       t.assert_equal(#hints.lines, 2)
@@ -31,7 +33,7 @@ return {
       )
       t.assert_equal(
         hints.lines[2],
-        "Restart: rr    Fresh rerun: rR    Cancel: q"
+        "Nav panes: j/k    Restart: rr    Fresh rerun: rR    Cancel: q"
       )
       t.assert_true(has_highlight(hints, "DoxiHintLabel"), "Hint labels should be highlighted.")
       t.assert_true(has_highlight(hints, "DoxiHintKey"), "Hint keys should be highlighted.")

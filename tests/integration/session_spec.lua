@@ -88,6 +88,133 @@ end
 
 return {
   {
+    name = "session pane navigation cycles imports editor and transcript panes",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub(nil, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
+
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, {
+              "def f():",
+              '    """',
+              "    Examples:",
+              "",
+              '    """',
+            })
+
+            local ok, err = xpcall(function()
+              session.open({
+                line1 = 4,
+                line2 = 4,
+                range = 2,
+              })
+
+              local active = t.wait_until(function()
+                return session.get_active()
+              end, 2000, "Session did not open.")
+
+              t.assert_equal(vim.api.nvim_get_current_win(), active.editor_winid)
+
+              active:focus_next_pane()
+              t.assert_equal(vim.api.nvim_get_current_win(), active.output_winid)
+
+              active:focus_next_pane()
+              t.assert_equal(vim.api.nvim_get_current_win(), active.imports_winid)
+
+              active:focus_previous_pane()
+              t.assert_equal(vim.api.nvim_get_current_win(), active.output_winid)
+
+              active:focus_previous_pane()
+              t.assert_equal(vim.api.nvim_get_current_win(), active.editor_winid)
+
+              session.cancel()
+            end, debug.traceback)
+
+            if session.get_active() then
+              session.cancel()
+            end
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
+        end)
+      end)
+    end,
+  },
+  {
+    name = "closing a session-owned pane closes the session without changing the source buffer",
+    fn = function()
+      run_with_picker_stub(function()
+        run_with_docstring_gate_stub(function()
+          run_with_context_stub(nil, function()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+            local source_bufnr = vim.api.nvim_create_buf(true, true)
+            local source_lines = {
+              "def f():",
+              '    """',
+              "    Examples:",
+              "",
+              '    """',
+            }
+
+            vim.api.nvim_set_current_buf(source_bufnr)
+            vim.api.nvim_set_option_value("filetype", "python", { buf = source_bufnr })
+            vim.api.nvim_buf_set_lines(source_bufnr, 0, -1, false, source_lines)
+
+            local ok, err = xpcall(function()
+              session.open({
+                line1 = 4,
+                line2 = 4,
+                range = 2,
+              })
+
+              local active = t.wait_until(function()
+                return session.get_active()
+              end, 2000, "Session did not open.")
+
+              vim.api.nvim_win_close(active.output_winid, true)
+
+              t.wait_until(function()
+                return session.get_active() == nil
+              end, 2000, "Session did not close after an owned pane closed.")
+
+              t.assert_deep_equal(vim.api.nvim_buf_get_lines(source_bufnr, 0, -1, false), source_lines)
+            end, debug.traceback)
+
+            if session.get_active() then
+              session.cancel()
+            end
+
+            if vim.api.nvim_buf_is_valid(source_bufnr) then
+              pcall(vim.api.nvim_buf_delete, source_bufnr, { force = true })
+            end
+
+            if vim.api.nvim_buf_is_valid(current_bufnr) then
+              vim.api.nvim_set_current_buf(current_bufnr)
+            end
+
+            if not ok then
+              error(err)
+            end
+          end)
+        end)
+      end)
+    end,
+  },
+  {
     name = "session attaches and detaches editor-pane lsp state without affecting open/apply flow",
     fn = function()
       run_with_picker_stub(function()
